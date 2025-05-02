@@ -1,7 +1,6 @@
+'use client'; // Required for state/event handlers
 
-'use client'; // Required for state/event handlers if added later
-
-import React from 'react';
+import React, { useState, useMemo, FormEvent, ChangeEvent } from 'react';
 import Image from 'next/image';
 import { Heart, MessageCircle, Send, Bookmark, MoreHorizontal } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -9,48 +8,101 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from 'next/link';
 import { formatDistanceToNowStrict } from 'date-fns'; // For relative timestamps
+import type { Post as PostType } from '@/services/post'; // Import type only
+import { likePost, unlikePost, addComment } from '@/services/post'; // Import service functions
+import { useToast } from '@/hooks/use-toast'; // Import useToast
+import { cn } from '@/lib/utils';
 
+interface PostProps extends PostType {} // Use PostType directly
 
-interface PostProps {
-  id: string;
-  username: string;
-  userAvatar: string;
-  imageUrl: string;
-  caption: string;
-  likes: number;
-  commentsCount: number; // Changed from 'comments' to 'commentsCount'
-  timestamp: string; // Expecting ISO string or parsable date string
-  imageHint?: string;
-}
 
 const Post: React.FC<PostProps> = ({
-  id, // Added id prop
+  id,
   username,
   userAvatar,
   imageUrl,
   caption,
-  likes,
-  commentsCount, // Use commentsCount
+  likes: initialLikes,
+  commentsCount: initialCommentsCount,
   timestamp,
   imageHint,
 }) => {
+    const { toast } = useToast();
+    // TODO: Add state for saved status
+    const [isLiked, setIsLiked] = useState(false); // Assume initial state is not liked (fetch this in real app)
+    const [likes, setLikes] = useState(initialLikes);
+    const [commentsCount, setCommentsCount] = useState(initialCommentsCount);
+    const [commentInput, setCommentInput] = useState('');
+    const [isSubmittingComment, setIsSubmittingComment] = useState(false);
 
-    // TODO: Add state for liked status, saved status
-    // TODO: Add handlers for like, save, comment submission, view comments
+    // TODO: Fetch initial like status for the current user
 
-    const timeAgo = React.useMemo(() => {
+    const handleLikeToggle = async () => {
+        const wasLiked = isLiked;
+        // Optimistic update
+        setIsLiked(!wasLiked);
+        setLikes(prev => wasLiked ? prev - 1 : prev + 1);
+
         try {
-            // Attempt to parse the timestamp
-             const date = new Date(timestamp);
-             // Check if the date is valid before formatting
-             if (!isNaN(date.getTime())) {
+            if (wasLiked) {
+                await unlikePost(id, 'current_user'); // Replace 'current_user' with actual user
+            } else {
+                await likePost(id, 'current_user'); // Replace 'current_user' with actual user
+            }
+        } catch (error) {
+            console.error("Failed to update like status:", error);
+            // Revert optimistic update on error
+            setIsLiked(wasLiked);
+            setLikes(prev => wasLiked ? prev + 1 : prev - 1);
+            toast({
+                title: "Error",
+                description: "Could not update like status.",
+                variant: "destructive",
+            });
+        }
+    };
+
+    const handleCommentChange = (e: ChangeEvent<HTMLInputElement>) => {
+        setCommentInput(e.target.value);
+    };
+
+    const handleCommentSubmit = async (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        if (!commentInput.trim()) return;
+
+        setIsSubmittingComment(true);
+        try {
+            const newComment = await addComment(id, 'current_user', commentInput); // Replace 'current_user'
+            setCommentsCount(prev => prev + 1); // Optimistic update
+            setCommentInput('');
+            toast({
+                title: "Comment Posted",
+                // description: `Your comment: ${newComment.text}`, // Optional: Show comment text
+            });
+             // TODO: Potentially add the new comment to a local state to display immediately
+        } catch (error) {
+            console.error("Failed to post comment:", error);
+            toast({
+                title: "Error Posting Comment",
+                description: "Could not post your comment. Please try again.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsSubmittingComment(false);
+        }
+    };
+
+
+    const timeAgo = useMemo(() => {
+        try {
+            const date = new Date(timestamp);
+            if (!isNaN(date.getTime())) {
                 return formatDistanceToNowStrict(date, { addSuffix: true });
-             }
+            }
         } catch (error) {
              console.error("Error parsing timestamp:", timestamp, error);
         }
-        // Fallback if parsing fails or timestamp is invalid/not provided in expected format
-        return timestamp; // Return original string as fallback
+        return timestamp; // Fallback
     }, [timestamp]);
 
 
@@ -88,12 +140,14 @@ const Post: React.FC<PostProps> = ({
 
       {/* Post Actions */}
       <div className="flex items-center p-3 space-x-4">
-        {/* TODO: Add like state and onClick handler */}
-        <Button variant="ghost" size="icon" className="p-0 h-auto hover:opacity-70">
-          <Heart className="h-6 w-6" />
+        <Button variant="ghost" size="icon" className="p-0 h-auto hover:opacity-70" onClick={handleLikeToggle}>
+          <Heart
+             className={cn("h-6 w-6", isLiked ? "text-red-500" : "text-foreground")}
+             fill={isLiked ? "currentColor" : "none"}
+          />
         </Button>
-         {/* TODO: Add onClick handler to focus comment input or open comments modal */}
-        <Button variant="ghost" size="icon" className="p-0 h-auto hover:opacity-70">
+         {/* Focus comment input or open comments modal */}
+        <Button variant="ghost" size="icon" className="p-0 h-auto hover:opacity-70" onClick={() => document.getElementById(`comment-input-${id}`)?.focus()}>
           <MessageCircle className="h-6 w-6" />
         </Button>
          {/* TODO: Add onClick handler for share action */}
@@ -130,10 +184,10 @@ const Post: React.FC<PostProps> = ({
       {/* View Comments */}
       {commentsCount > 0 && (
         <div className="px-3 pb-2">
-           {/* TODO: Update link/handler to open comments modal/view */}
+           {/* Link to the dedicated post page */}
           <Link href={`/p/${id}`} legacyBehavior>
             <a className="text-sm text-muted-foreground cursor-pointer hover:underline">
-                View all {commentsCount} comment{commentsCount !== 1 ? 's' : ''}
+                View all {commentsCount.toLocaleString()} comment{commentsCount !== 1 ? 's' : ''}
             </a>
           </Link>
         </div>
@@ -146,17 +200,26 @@ const Post: React.FC<PostProps> = ({
 
 
       {/* Add Comment */}
-       {/* TODO: Implement comment submission logic */}
       <div className="border-t border-border p-3">
-        <form className="flex items-center" onSubmit={(e) => e.preventDefault()}> {/* Prevent default form submission */}
+        <form className="flex items-center" onSubmit={handleCommentSubmit}>
           <Input
+            id={`comment-input-${id}`} // Add unique ID for focusing
             type="text"
             placeholder="Add a comment..."
             className="flex-grow border-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm p-0 h-auto bg-transparent"
             aria-label="Add a comment"
+            value={commentInput}
+            onChange={handleCommentChange}
+            disabled={isSubmittingComment}
           />
-          <Button type="submit" variant="ghost" size="sm" className="text-primary hover:text-primary font-semibold px-0" disabled={true}> {/* Disable post until input has value */}
-            Post
+          <Button
+            type="submit"
+            variant="ghost"
+            size="sm"
+            className="text-primary hover:text-primary font-semibold px-0"
+            disabled={!commentInput.trim() || isSubmittingComment}
+          >
+            {isSubmittingComment ? 'Posting...' : 'Post'}
           </Button>
         </form>
       </div>

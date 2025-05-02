@@ -1,3 +1,4 @@
+import { formatDistanceToNowStrict } from 'date-fns';
 
 /**
  * Represents a single post in the feed or on a profile.
@@ -32,9 +33,9 @@ export interface Post {
    */
   commentsCount: number; // Renamed for clarity vs. actual comment objects
   /**
-   * Timestamp indicating when the post was created (human-readable or ISO string).
+   * Timestamp indicating when the post was created (ISO string).
    */
-  timestamp: string; // Could be Date object or ISO string
+  timestamp: string; // Expecting ISO string for reliable date parsing
   /**
    * Optional hint for AI-based image search or description generation.
    */
@@ -50,11 +51,20 @@ export interface Comment {
     username: string;
     userAvatar: string;
     text: string;
-    timestamp: string; // Could be Date object or ISO string
+    timestamp: string; // Expecting ISO string for reliable date parsing
 }
 
 
 // --- Mock Data Simulation (Replace with actual Firestore calls) ---
+
+// Helper to generate ISO timestamps for mock data
+const generateTimestamp = (offsetDays: number = 0, offsetHours: number = 0): string => {
+  const date = new Date();
+  date.setDate(date.getDate() - offsetDays);
+  date.setHours(date.getHours() - offsetHours);
+  return date.toISOString();
+}
+
 
 const mockPosts: Map<string, Post> = new Map([
   ['post-1', {
@@ -65,7 +75,7 @@ const mockPosts: Map<string, Post> = new Map([
       caption: 'Beautiful sunset view! #nature #sunset',
       likes: 152,
       commentsCount: 12,
-      timestamp: '2 hours ago',
+      timestamp: generateTimestamp(0, 2), // 2 hours ago
       imageHint: 'nature sunset',
   }],
   ['post-2', {
@@ -76,7 +86,7 @@ const mockPosts: Map<string, Post> = new Map([
       caption: 'Delicious pasta dish I made tonight. 🍝 #food #homemade',
       likes: 210,
       commentsCount: 35,
-      timestamp: '5 hours ago',
+      timestamp: generateTimestamp(0, 5), // 5 hours ago
       imageHint: 'food pasta',
   }],
    ['post-3', {
@@ -87,7 +97,7 @@ const mockPosts: Map<string, Post> = new Map([
       caption: 'Exploring the city streets. #urban #citylife',
       likes: 98,
       commentsCount: 5,
-      timestamp: '1 day ago',
+      timestamp: generateTimestamp(1, 0), // 1 day ago
       imageHint: 'city street',
   }],
   // Add more posts, including posts for 'current_user' and suggested users
@@ -99,7 +109,7 @@ const mockPosts: Map<string, Post> = new Map([
       caption: `My post number ${i + 1}! Enjoying the day. #random`,
       likes: Math.floor(Math.random() * 200),
       commentsCount: Math.floor(Math.random() * 30),
-      timestamp: `${i + 1} day${i > 0 ? 's' : ''} ago`,
+      timestamp: generateTimestamp(i + 1, Math.floor(Math.random()*23)), // days ago
       imageHint: 'user lifestyle photo',
   }] as [string, Post]),
    ...Array.from({ length: 5 }).flatMap((_, userIndex) =>
@@ -114,7 +124,7 @@ const mockPosts: Map<string, Post> = new Map([
                 caption: `A random post from ${username}. Check it out! #${username}`,
                 likes: Math.floor(Math.random() * 100),
                 commentsCount: Math.floor(Math.random() * 15),
-                timestamp: `${postIndex + 1} hour${postIndex > 0 ? 's' : ''} ago`,
+                timestamp: generateTimestamp(0, postIndex + 1), // hours ago
                 imageHint: 'suggested user content',
            }] as [string, Post];
        })
@@ -123,18 +133,63 @@ const mockPosts: Map<string, Post> = new Map([
 
 const mockComments: Map<string, Comment[]> = new Map([
   ['post-1', [
-    { id: 'c1-1', postId: 'post-1', username: 'commenter1', userAvatar: 'https://picsum.photos/seed/commenter1/32/32', text: 'Amazing shot!', timestamp: '1 hour ago' },
-    { id: 'c1-2', postId: 'post-1', username: 'foodiegal', userAvatar: 'https://picsum.photos/seed/user2/32/32', text: 'So pretty!', timestamp: '30 mins ago' },
+    { id: 'c1-1', postId: 'post-1', username: 'commenter1', userAvatar: 'https://picsum.photos/seed/commenter1/32/32', text: 'Amazing shot!', timestamp: generateTimestamp(0, 1) }, // 1 hour ago
+    { id: 'c1-2', postId: 'post-1', username: 'foodiegal', userAvatar: 'https://picsum.photos/seed/user2/32/32', text: 'So pretty!', timestamp: generateTimestamp(0, 0, 30) }, // 30 minutes ago
   ]],
   ['post-2', [
-    { id: 'c2-1', postId: 'post-2', username: 'naturelover', userAvatar: 'https://picsum.photos/seed/user1/32/32', text: 'Looks delicious!', timestamp: '4 hours ago' },
-    { id: 'c2-2', postId: 'post-2', username: 'commenter2', userAvatar: 'https://picsum.photos/seed/commenter2/32/32', text: 'Recipe please?', timestamp: '3 hours ago' },
-    { id: 'c2-3', postId: 'post-2', username: 'commenter3', userAvatar: 'https://picsum.photos/seed/commenter3/32/32', text: 'Yummy!', timestamp: '1 hour ago' },
+    { id: 'c2-1', postId: 'post-2', username: 'naturelover', userAvatar: 'https://picsum.photos/seed/user1/32/32', text: 'Looks delicious!', timestamp: generateTimestamp(0, 4) },
+    { id: 'c2-2', postId: 'post-2', username: 'commenter2', userAvatar: 'https://picsum.photos/seed/commenter2/32/32', text: 'Recipe please?', timestamp: generateTimestamp(0, 3) },
+    { id: 'c2-3', postId: 'post-2', username: 'commenter3', userAvatar: 'https://picsum.photos/seed/commenter3/32/32', text: 'Yummy!', timestamp: generateTimestamp(0, 1) },
   ]],
     // Add more comments for other posts if needed
 ]);
 
+// Add comments to current_user posts
+mockPosts.forEach(post => {
+    if (post.username === 'current_user' && post.commentsCount > 0) {
+        const comments: Comment[] = [];
+        for (let i = 0; i < post.commentsCount; i++) {
+            const commenter = `commenter_${i + Math.floor(Math.random()*10)}`;
+            comments.push({
+                id: `cc-${post.id}-${i}`,
+                postId: post.id,
+                username: commenter,
+                userAvatar: `https://picsum.photos/seed/${commenter}/32/32`,
+                text: `This is comment ${i+1} on post ${post.id}.`,
+                timestamp: generateTimestamp(0, i), // Stagger comment times slightly
+            });
+        }
+         mockComments.set(post.id, comments.sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())); // Sort oldest first
+    }
+});
+
+
 // --- End Mock Data Simulation ---
+
+/**
+ * Asynchronously retrieves a single post by its ID.
+ * Simulates fetching a specific document from Firestore.
+ *
+ * @param postId The ID of the post to retrieve.
+ * @returns A promise that resolves to the Post object or null if not found.
+ */
+export async function getPostById(postId: string): Promise<Post | null> {
+  console.log(`Simulating Firestore fetch for post ID: ${postId}`);
+  // Simulate API call delay
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // In real Firestore:
+  // const postDocRef = doc(db, 'posts', postId);
+  // const postSnap = await getDoc(postDocRef);
+  // if (postSnap.exists()) {
+  //   return { ...postSnap.data() as Post, id: postSnap.id };
+  // } else {
+  //   return null;
+  // }
+
+  const post = mockPosts.get(postId);
+  return post || null;
+}
 
 
 /**
@@ -150,27 +205,10 @@ export async function getFeedPosts(limit: number = 10 /*, startAfter?: any */): 
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 500));
 
-  // In real Firestore:
-  // Query the 'posts' collection, order by timestamp descending.
-  // Implement pagination using startAfter(lastVisibleDoc).
-  // const postsRef = collection(db, 'posts');
-  // const q = query(postsRef, orderBy('timestamp', 'desc'), limit(limit)); // Add startAfter(startAfter) if provided
-  // const querySnapshot = await getDocs(q);
-  // return querySnapshot.docs.map(doc => ({ ...doc.data() as Post, id: doc.id }));
-
-  // Mock implementation: Return a slice of all mock posts, sorted roughly by time (using array order as proxy)
+  // Mock implementation: Return a slice of all mock posts, sorted by timestamp descending
   const allPosts = Array.from(mockPosts.values()).sort((a, b) => {
-     // Crude sort based on mock timestamps - replace with real date sorting
-     const timeA = parseInt(a.timestamp.split(' ')[0]);
-     const timeB = parseInt(b.timestamp.split(' ')[0]);
-     const unitA = a.timestamp.split(' ')[1];
-     const unitB = b.timestamp.split(' ')[1];
-
-     const factorA = unitA.startsWith('hour') ? 1 : unitA.startsWith('day') ? 24 : 0;
-     const factorB = unitB.startsWith('hour') ? 1 : unitB.startsWith('day') ? 24 : 0;
-
-     return (timeA * factorA) - (timeB * factorB); // Sorts oldest first - reverse for newest
-  }).reverse();
+     return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+  });
 
   // TODO: Implement actual pagination based on startAfter
   return allPosts.slice(0, limit);
@@ -190,25 +228,11 @@ export async function getUserPosts(username: string, limit: number = 12 /*, star
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 450));
 
-  // In real Firestore:
-  // Query the 'posts' collection, filter by username, order by timestamp descending.
-  // Implement pagination.
-  // const postsRef = collection(db, 'posts');
-  // const q = query(postsRef, where('username', '==', username), orderBy('timestamp', 'desc'), limit(limit));
-  // const querySnapshot = await getDocs(q);
-  // return querySnapshot.docs.map(doc => ({ ...doc.data() as Post, id: doc.id }));
-
   const userPosts = Array.from(mockPosts.values())
       .filter(post => post.username === username)
-      .sort((a, b) => { /* similar crude sort as getFeedPosts */
-            const timeA = parseInt(a.timestamp.split(' ')[0]);
-            const timeB = parseInt(b.timestamp.split(' ')[0]);
-            const unitA = a.timestamp.split(' ')[1];
-            const unitB = b.timestamp.split(' ')[1];
-            const factorA = unitA.startsWith('hour') ? 1 : unitA.startsWith('day') ? 24 : 0;
-            const factorB = unitB.startsWith('hour') ? 1 : unitB.startsWith('day') ? 24 : 0;
-            return (timeA * factorA) - (timeB * factorB);
-      }).reverse();
+      .sort((a, b) => {
+            return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+      });
 
   return userPosts.slice(0, limit);
 }
@@ -228,24 +252,10 @@ export async function getPostComments(postId: string, limit: number = 20 /*, sta
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 350));
 
-    // In real Firestore:
-    // Query the 'comments' subcollection within the specific post document.
-    // const commentsRef = collection(db, 'posts', postId, 'comments');
-    // const q = query(commentsRef, orderBy('timestamp', 'asc'), limit(limit)); // Order by oldest first
-    // const querySnapshot = await getDocs(q);
-    // return querySnapshot.docs.map(doc => ({ ...doc.data() as Comment, id: doc.id }));
-
     const comments = mockComments.get(postId) || [];
-    // Sort comments by timestamp (assuming mock timestamps allow basic comparison)
+    // Sort comments by timestamp ascending (oldest first)
     const sortedComments = comments.sort((a, b) => {
-        // Crude sort - replace with actual date parsing and comparison
-         const timeA = parseInt(a.timestamp.split(' ')[0]);
-         const timeB = parseInt(b.timestamp.split(' ')[0]);
-         const unitA = a.timestamp.split(' ')[1];
-         const unitB = b.timestamp.split(' ')[1];
-         const factorA = unitA.startsWith('min') ? 1 : unitA.startsWith('hour') ? 60 : 0;
-         const factorB = unitB.startsWith('min') ? 1 : unitB.startsWith('hour') ? 60 : 0;
-         return (timeB * factorB) - (timeA * factorA); // Newest first for display? Or oldest? Adjust as needed.
+        return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
     });
 
     return sortedComments.slice(0, limit);
@@ -276,7 +286,7 @@ export async function addComment(postId: string, username: string, text: string)
         username: username,
         userAvatar: `https://picsum.photos/seed/${username}/32/32`, // Fetch or use current user's avatar
         text: text,
-        timestamp: 'Just now', // Or new Date().toISOString()
+        timestamp: new Date().toISOString(), // Use current ISO timestamp
     };
 
     // In real Firestore:
