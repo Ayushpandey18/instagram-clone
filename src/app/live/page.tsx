@@ -93,7 +93,11 @@ export default function LivePage() {
     if (hasCameraPermission === true && hasMicPermission === true) {
         console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL}...`);
         // Explicitly define transports, prioritizing WebSocket
-        socketRef.current = io(SOCKET_SERVER_URL, { transports: ['websocket', 'polling'] });
+        socketRef.current = io(SOCKET_SERVER_URL, {
+            transports: ['websocket', 'polling'], // Prioritize WebSocket
+            reconnectionAttempts: 3, // Limit reconnection attempts
+            timeout: 10000, // Connection timeout
+         });
 
 
         socketRef.current.on('connect', () => {
@@ -110,12 +114,12 @@ export default function LivePage() {
         });
 
         socketRef.current.on('connect_error', (error: Error) => {
-            console.error('Socket.IO connection error:', error);
+            console.error('Socket.IO connection error:', error.message, error.name);
              toast({
                 variant: 'destructive',
                 title: 'Connection Error',
-                description: `Could not connect to the live server at ${SOCKET_SERVER_URL}. Please ensure the server is running and check CORS settings. Error: ${error.message}`,
-                duration: 10000 // Show longer duration for connection errors
+                description: `Failed to connect to the live server (${error.message}). Please check if the server is running at ${SOCKET_SERVER_URL}, ensure CORS is configured correctly on the server, and verify network connectivity. Try refreshing the page.`,
+                duration: 15000 // Show longer duration for connection errors
             });
         });
 
@@ -139,7 +143,7 @@ export default function LivePage() {
         }
     }
    // eslint-disable-next-line react-hooks/exhaustive-deps
-   }, [hasCameraPermission, hasMicPermission, toast]); // Removed isLive and toast from dependencies to avoid reconnect loops
+   }, [hasCameraPermission, hasMicPermission]); // Removed toast from dependencies to avoid reconnect loops
 
 
   const handleGoLive = () => {
@@ -306,3 +310,4 @@ export default function LivePage() {
     </div>
   );
 }
+
