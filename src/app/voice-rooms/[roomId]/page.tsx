@@ -94,11 +94,11 @@ export default function VoiceRoomPage() {
 
     setIsConnecting(true);
     setConnectionError(null);
-    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL}...`);
+    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL} using polling...`);
 
-    // Explicitly define transports
+    // Explicitly define transports, FORCING polling for Vercel/Serverless compatibility
      const socket = io(SOCKET_SERVER_URL, {
-        transports: ['websocket', 'polling'], // Prioritize WebSocket
+        transports: ['polling'], // FORCE POLLING ONLY
         reconnectionAttempts: 3, // Limit reconnection attempts
         timeout: 10000, // Connection timeout
      });

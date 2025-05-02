@@ -91,10 +91,10 @@ export default function LivePage() {
    useEffect(() => {
     // Connect only if permissions are granted (or potentially allow joining without streaming)
     if (hasCameraPermission === true && hasMicPermission === true) {
-        console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL}...`);
-        // Explicitly define transports, prioritizing WebSocket
+        console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL} using polling...`);
+        // Explicitly define transports, FORCING polling for Vercel/Serverless compatibility
         socketRef.current = io(SOCKET_SERVER_URL, {
-            transports: ['websocket', 'polling'], // Prioritize WebSocket
+            transports: ['polling'], // FORCE POLLING ONLY
             reconnectionAttempts: 3, // Limit reconnection attempts
             timeout: 10000, // Connection timeout
          });
