@@ -1,3 +1,4 @@
+
 'use client'; // Required for state and effects
 
 import React, { useState, useEffect } from 'react';
@@ -8,11 +9,14 @@ import type { UserStory } from '@/services/story'; // Import type only
 import { getActiveStories, markStoriesAsViewed } from '@/services/story'; // Import service functions
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast'; // Import useToast
+import StoryViewer from '@/components/story/StoryViewer'; // Import the StoryViewer
 
 const Stories = () => {
   const [stories, setStories] = useState<UserStory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+  const [selectedStoryIndex, setSelectedStoryIndex] = useState(0);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -33,37 +37,63 @@ const Stories = () => {
     fetchStories();
   }, []);
 
-  // Placeholder function to handle clicking a story
-  const handleStoryClick = async (username: string) => {
-     console.log(`Opening stories for ${username}`);
-     toast({
-       title: "Story Viewer",
-       description: `Viewing stories for ${username}. (Viewer UI not implemented yet)`,
-     });
+  // Function to handle clicking a story
+  const handleStoryClick = async (username: string, index: number) => {
+     console.log(`Opening stories for ${username} at index ${index}`);
+     // toast({
+     //   title: "Story Viewer",
+     //   description: `Viewing stories for ${username}. (Viewer UI not implemented yet)`,
+     // });
+
+     setSelectedStoryIndex(index);
+     setIsViewerOpen(true);
+
 
     // Mark stories as viewed (optimistic UI update + backend call)
-    const updatedStories = stories.map(story =>
-      story.username === username ? { ...story, viewedByCurrentUser: true } : story
-    );
-    setStories(updatedStories);
+    // Only mark if not already viewed to avoid unnecessary calls
+     if (!stories[index]?.viewedByCurrentUser) {
+        const updatedStories = stories.map(story =>
+            story.username === username ? { ...story, viewedByCurrentUser: true } : story
+        );
+        setStories(updatedStories);
 
-    try {
-       await markStoriesAsViewed(username); // Call the service function
-    } catch (err) {
-       console.error("Failed to mark stories as viewed:", err);
-       // Optionally revert the optimistic update or show an error toast
-       toast({
-         title: "Error",
-         description: "Could not update viewed status.",
-         variant: "destructive",
-       });
-       // Revert UI change if backend fails
-       setStories(stories); // Set back to original state before optimistic update
-    }
+        try {
+           await markStoriesAsViewed(username); // Call the service function
+        } catch (err) {
+           console.error("Failed to mark stories as viewed:", err);
+           // Optionally revert the optimistic update or show an error toast
+           toast({
+             title: "Error",
+             description: "Could not update viewed status.",
+             variant: "destructive",
+           });
+           // Revert UI change if backend fails (fetch original state or handle differently)
+           // For simplicity, we'll leave the optimistic update for now.
+           // setStories(stories); // Reverting might cause UI flicker if user clicks quickly
+        }
+     }
 
-    // TODO: Implement the actual story viewer modal/component here
-    // This component would display story.items with navigation (prev/next story, prev/next user)
   };
+
+  const handleCloseViewer = () => {
+    setIsViewerOpen(false);
+  };
+
+  const handleNextUser = () => {
+    setSelectedStoryIndex(prevIndex => (prevIndex + 1) % stories.length);
+     // Automatically mark the next user's story as viewed if it exists and isn't already
+     const nextIndex = (selectedStoryIndex + 1) % stories.length;
+     const nextUserStory = stories[nextIndex];
+     if (nextUserStory && !nextUserStory.viewedByCurrentUser) {
+         handleStoryClick(nextUserStory.username, nextIndex); // Re-trigger to mark as viewed
+     }
+  };
+
+  const handlePrevUser = () => {
+    setSelectedStoryIndex(prevIndex => (prevIndex - 1 + stories.length) % stories.length);
+    // Optionally mark previous as viewed if navigating back, but usually not needed
+  };
+
 
   return (
     <div className="mb-4 py-3 bg-background border border-border rounded-lg overflow-hidden"> {/* Adjusted padding */}
@@ -81,10 +111,10 @@ const Stories = () => {
             ) : stories.length === 0 ? (
                 <p className="text-xs text-muted-foreground px-4">No stories available right now.</p>
             ) : (
-                stories.map((story) => (
+                stories.map((story, index) => (
                     <button
                         key={story.username}
-                        onClick={() => handleStoryClick(story.username)}
+                        onClick={() => handleStoryClick(story.username, index)}
                         className="flex flex-col items-center w-16 shrink-0 group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-md"
                         aria-label={`View ${story.username}'s story`}
                     >
@@ -112,6 +142,16 @@ const Stories = () => {
         </div>
         {!isLoading && !error && stories.length > 0 && <ScrollBar orientation="horizontal" className="h-1.5" />} {/* Show scrollbar only if needed */}
        </ScrollArea>
+
+        {isViewerOpen && stories.length > 0 && (
+             <StoryViewer
+                stories={stories}
+                startIndex={selectedStoryIndex}
+                onClose={handleCloseViewer}
+                onNextUser={handleNextUser}
+                onPrevUser={handlePrevUser}
+            />
+        )}
     </div>
   );
 };

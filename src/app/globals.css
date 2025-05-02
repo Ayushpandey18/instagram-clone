@@ -110,3 +110,26 @@ body {
   max-width: 450px;
   outline: none;
 }
+
+/* Story Viewer Animation */
+@keyframes zoom-in {
+  from {
+    transform: scale(1.02); /* Start slightly zoomed in */
+  }
+  to {
+    transform: scale(1.08); /* End slightly more zoomed in */
+  }
+}
+
+.animate-zoom-in {
+  animation: zoom-in 5s linear forwards; /* Match default story duration */
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
