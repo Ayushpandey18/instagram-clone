@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -30,8 +31,8 @@ export default function PostDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   // State for interactions
-  const [isLiked, setIsLiked] = useState(false); // TODO: Fetch initial state
-  const [likes, setLikes] = useState(0);
+  const [isLiked, setIsLiked] = useState(false); // TODO: Fetch initial state based on current user
+  const [likes, setLikes] = useState(0); // Initialize with 0, update from postData
   const [commentInput, setCommentInput] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
 
@@ -42,23 +43,28 @@ export default function PostDetailPage() {
       setIsLoadingPost(true);
       setError(null);
       try {
+        console.log("Fetching post with ID:", postId); // Debug log
+        // Ensure getPostById is called correctly
         const postData = await getPostById(postId);
+        console.log("Fetched post data:", postData); // Debug log
         if (postData) {
           setPost(postData);
           setLikes(postData.likes);
           // TODO: Fetch current user's like status for this post
+          // setIsLiked(await checkUserLikeStatus(postId, 'current_user')); // Example
         } else {
           setError(`Post with ID "${postId}" not found.`);
         }
-      } catch (err) {
+      } catch (err: any) { // Catch specific error
         console.error("Failed to load post", err);
-        setError("Failed to load post details. Please try again.");
+        // Log the actual error to see if it provides more clues
+        setError(`Failed to load post details: ${err.message || 'Please try again.'}`);
       } finally {
         setIsLoadingPost(false);
       }
     };
     loadPost();
-  }, [postId]);
+  }, [postId]); // Dependency array includes postId
 
   // Fetch Comments Data
   useEffect(() => {
@@ -98,25 +104,29 @@ export default function PostDetailPage() {
     const handleLikeToggle = async () => {
         if (!post) return;
         const wasLiked = isLiked;
+        const initialLikes = likes; // Store initial likes for potential revert
+
+        // Optimistic update
         setIsLiked(!wasLiked);
         setLikes(prev => wasLiked ? prev - 1 : prev + 1);
+        // Also update the local post state optimistically (optional but good for consistency)
+        setPost(prevPost => prevPost ? { ...prevPost, likes: wasLiked ? prevPost.likes - 1 : prevPost.likes + 1 } : null);
+
 
         try {
             if (wasLiked) {
-                await unlikePost(post.id, 'current_user'); // Replace 'current_user'
+                await unlikePost(post.id, 'current_user'); // Replace 'current_user' with actual user logic
             } else {
-                await likePost(post.id, 'current_user'); // Replace 'current_user'
+                await likePost(post.id, 'current_user'); // Replace 'current_user' with actual user logic
             }
-            // Update the post state locally if needed (optional)
-             if (post) {
-                 setPost(prevPost => prevPost ? { ...prevPost, likes: wasLiked ? prevPost.likes - 1 : prevPost.likes + 1 } : null);
-             }
+             // Optional: Refetch post data to confirm server state, or trust optimistic update
         } catch (error) {
             console.error("Failed to update like status:", error);
+             // Revert optimistic update on error
             setIsLiked(wasLiked);
-            setLikes(prev => wasLiked ? prev + 1 : prev - 1);
+            setLikes(initialLikes);
              if (post) { // Revert local post state too
-                 setPost(prevPost => prevPost ? { ...prevPost, likes: initialLikes } : null); // Revert to original count fetched
+                 setPost(prevPost => prevPost ? { ...prevPost, likes: initialLikes } : null);
              }
             toast({ title: "Error", description: "Could not update like status.", variant: "destructive" });
         }
@@ -127,17 +137,21 @@ export default function PostDetailPage() {
         if (!commentInput.trim() || !post) return;
 
         setIsSubmittingComment(true);
+        const originalCommentsCount = post.commentsCount; // Store for revert
         try {
+            // Optimistic UI update for comment count
+            setPost(prevPost => prevPost ? { ...prevPost, commentsCount: prevPost.commentsCount + 1 } : null);
+
             const newComment = await addComment(post.id, 'current_user', commentInput); // Replace 'current_user'
-            setComments(prev => [...prev, newComment]); // Add new comment to the start or end? End is usually chronological
+            setComments(prev => [...prev, newComment]); // Add new comment to the end
             setCommentInput('');
-             // Update post state locally if needed
-             if (post) {
-                 setPost(prevPost => prevPost ? { ...prevPost, commentsCount: prevPost.commentsCount + 1 } : null);
-             }
             toast({ title: "Comment Posted" });
         } catch (error) {
             console.error("Failed to post comment:", error);
+             // Revert optimistic update
+             if (post) {
+                 setPost(prevPost => prevPost ? { ...prevPost, commentsCount: originalCommentsCount } : null);
+             }
             toast({ title: "Error Posting Comment", description: "Could not post your comment.", variant: "destructive" });
         } finally {
             setIsSubmittingComment(false);
@@ -154,7 +168,7 @@ export default function PostDetailPage() {
     );
   }
 
-  if (error && !post) { // Show full error page if post failed entirely
+  if (error && !post) { // Show full error page if post loading failed entirely
      return (
          <div className="container mx-auto max-w-4xl py-8 px-4 flex flex-col items-center justify-center h-[calc(100vh-200px)]">
              <Alert variant="destructive" className="w-full max-w-md">
@@ -163,7 +177,7 @@ export default function PostDetailPage() {
                <AlertDescription>{error}</AlertDescription>
              </Alert>
              <Button variant="link" asChild className="mt-4" onClick={() => router.back()}>
-                 <Link href="#"><ArrowLeft className="mr-2 h-4 w-4" /> Go Back</Link>
+                 <a><ArrowLeft className="mr-2 h-4 w-4" /> Go Back</a>
              </Button>
          </div>
      );
@@ -231,6 +245,7 @@ export default function PostDetailPage() {
                         <Link href={`/profile/${post.username}`} className="font-semibold mr-1 hover:underline">
                             {post.username}
                         </Link>
+                        {' '} {/* Add space */}
                         {post.caption}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">{timeAgo}</p> {/* Timestamp for caption */}
@@ -269,6 +284,7 @@ export default function PostDetailPage() {
                             <Link href={`/profile/${comment.username}`} className="font-semibold mr-1 hover:underline">
                                 {comment.username}
                             </Link>
+                            {' '} {/* Add space */}
                             {comment.text}
                         </p>
                          <p className="text-xs text-muted-foreground mt-1">
@@ -279,7 +295,7 @@ export default function PostDetailPage() {
                 </div>
                 ))
             )}
-             {error && !isLoadingComments && <p className="text-xs text-destructive text-center">{error.includes('comments') ? "Failed to load comments." : ""}</p>}
+             {error && error.includes('comments') && !isLoadingComments && <p className="text-xs text-destructive text-center">Failed to load comments.</p>}
           </div>
 
            {/* Actions Footer */}

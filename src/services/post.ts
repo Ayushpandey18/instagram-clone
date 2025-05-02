@@ -1,3 +1,4 @@
+
 import { formatDistanceToNowStrict } from 'date-fns';
 
 /**
@@ -58,10 +59,11 @@ export interface Comment {
 // --- Mock Data Simulation (Replace with actual Firestore calls) ---
 
 // Helper to generate ISO timestamps for mock data
-const generateTimestamp = (offsetDays: number = 0, offsetHours: number = 0): string => {
+const generateTimestamp = (offsetDays: number = 0, offsetHours: number = 0, offsetMinutes: number = 0): string => { // Added offsetMinutes
   const date = new Date();
   date.setDate(date.getDate() - offsetDays);
   date.setHours(date.getHours() - offsetHours);
+  date.setMinutes(date.getMinutes() - offsetMinutes); // Added minutes offset
   return date.toISOString();
 }
 
@@ -174,7 +176,7 @@ mockPosts.forEach(post => {
  * @returns A promise that resolves to the Post object or null if not found.
  */
 export async function getPostById(postId: string): Promise<Post | null> {
-  console.log(`Simulating Firestore fetch for post ID: ${postId}`);
+  console.log(`[Service:post] Simulating Firestore fetch for post ID: ${postId}`);
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 300));
 
@@ -188,6 +190,7 @@ export async function getPostById(postId: string): Promise<Post | null> {
   // }
 
   const post = mockPosts.get(postId);
+  console.log(`[Service:post] Found post for ID ${postId}:`, post ? 'Yes' : 'No');
   return post || null;
 }
 
@@ -201,7 +204,7 @@ export async function getPostById(postId: string): Promise<Post | null> {
  * @returns A promise that resolves to an array of Post objects.
  */
 export async function getFeedPosts(limit: number = 10 /*, startAfter?: any */): Promise<Post[]> {
-  console.log(`Simulating Firestore query for feed posts (limit: ${limit})`);
+  console.log(`[Service:post] Simulating Firestore query for feed posts (limit: ${limit})`);
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -224,7 +227,7 @@ export async function getFeedPosts(limit: number = 10 /*, startAfter?: any */): 
  * @returns A promise that resolves to an array of Post objects.
  */
 export async function getUserPosts(username: string, limit: number = 12 /*, startAfter?: any */): Promise<Post[]> {
-  console.log(`Simulating Firestore query for posts by user: ${username} (limit: ${limit})`);
+  console.log(`[Service:post] Simulating Firestore query for posts by user: ${username} (limit: ${limit})`);
   // Simulate API call delay
   await new Promise(resolve => setTimeout(resolve, 450));
 
@@ -248,7 +251,7 @@ export async function getUserPosts(username: string, limit: number = 12 /*, star
  * @returns A promise that resolves to an array of Comment objects.
  */
 export async function getPostComments(postId: string, limit: number = 20 /*, startAfter?: any */): Promise<Comment[]> {
-    console.log(`Simulating Firestore query for comments on post: ${postId} (limit: ${limit})`);
+    console.log(`[Service:post] Simulating Firestore query for comments on post: ${postId} (limit: ${limit})`);
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 350));
 
@@ -272,7 +275,7 @@ export async function getPostComments(postId: string, limit: number = 20 /*, sta
  * @returns A promise that resolves to the newly created Comment object.
  */
 export async function addComment(postId: string, username: string, text: string): Promise<Comment> {
-    console.log(`Simulating adding comment by ${username} to post ${postId}: "${text}"`);
+    console.log(`[Service:post] Simulating adding comment by ${username} to post ${postId}: "${text}"`);
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 300));
 
@@ -328,7 +331,7 @@ export async function addComment(postId: string, username: string, text: string)
  * @returns A promise that resolves when the action is complete (simulation).
  */
 export async function likePost(postId: string, username: string): Promise<void> {
-    console.log(`Simulating like by ${username} on post ${postId}`);
+    console.log(`[Service:post] Simulating like by ${username} on post ${postId}`);
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 150));
 
@@ -342,9 +345,9 @@ export async function likePost(postId: string, username: string): Promise<void> 
         //    - Increment 'likes' count on the post document.
         post.likes += 1; // Simple increment for mock
         mockPosts.set(postId, post);
-        console.log(`Post ${postId} like count updated to ${post.likes} (simulation).`);
+        console.log(`[Service:post] Post ${postId} like count updated to ${post.likes} (simulation).`);
     } else {
-        console.warn(`Post ${postId} not found for liking.`);
+        console.warn(`[Service:post] Post ${postId} not found for liking.`);
     }
 }
 
@@ -357,7 +360,7 @@ export async function likePost(postId: string, username: string): Promise<void> 
  * @returns A promise that resolves when the action is complete (simulation).
  */
 export async function unlikePost(postId: string, username: string): Promise<void> {
-    console.log(`Simulating unlike by ${username} on post ${postId}`);
+    console.log(`[Service:post] Simulating unlike by ${username} on post ${postId}`);
     // Simulate API call delay
     await new Promise(resolve => setTimeout(resolve, 150));
 
@@ -371,13 +374,24 @@ export async function unlikePost(postId: string, username: string): Promise<void
         //    - Decrement 'likes' count on the post document.
         post.likes -= 1; // Simple decrement for mock
         mockPosts.set(postId, post);
-        console.log(`Post ${postId} like count updated to ${post.likes} (simulation).`);
+        console.log(`[Service:post] Post ${postId} like count updated to ${post.likes} (simulation).`);
     } else if (post) {
-        console.warn(`Post ${postId} already has 0 likes or user didn't like it (simulation).`);
+        console.warn(`[Service:post] Post ${postId} already has 0 likes or user didn't like it (simulation).`);
     } else {
-        console.warn(`Post ${postId} not found for unliking.`);
+        console.warn(`[Service:post] Post ${postId} not found for unliking.`);
     }
 }
+
+// Explicitly log available exports for debugging client-side import issues
+console.log("[Service:post] Exporting:", {
+    getPostById,
+    getFeedPosts,
+    getUserPosts,
+    getPostComments,
+    addComment,
+    likePost,
+    unlikePost,
+});
 
 // --- Other Potential Post Service Functions ---
 // - createPost(...)
