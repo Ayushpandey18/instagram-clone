@@ -23,9 +23,7 @@ export interface VoiceRoom {
 
 // --- Mock Data Store (Replace with actual database/API calls) ---
 const mockVoiceRooms: Map<string, VoiceRoom> = new Map([
-  ['room-1-chill', { id: 'room-1-chill', name: 'Chill Hangout', passwordProtected: false }],
-  ['room-2-gaming', { id: 'room-2-gaming', name: 'Gaming Crew 🎮', passwordProtected: true /* password: "password" */ }],
-  ['room-3-study', { id: 'room-3-study', name: 'Study Session 📚', passwordProtected: false }],
+
 ]);
 // --- End Mock Data Store ---
 

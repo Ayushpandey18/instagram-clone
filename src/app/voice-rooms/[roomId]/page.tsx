@@ -8,17 +8,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PhoneOff, Send, Mic, MicOff, Volume2, VolumeX, Lock, Loader2, ArrowLeft, Settings, AlertCircle } from 'lucide-react'; // Added AlertCircle
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"; // Added CardDescription
+import { PhoneOff, Send, Mic, MicOff, Volume2, VolumeX, Lock, Loader2, ArrowLeft, Settings, AlertCircle, User, Users } from 'lucide-react'; // Added User, Users, AlertCircle
 import { useToast } from "@/hooks/use-toast";
 import type { VoiceRoom } from '@/services/voice-room'; // Import type only
 import { getVoiceRoom } from '@/services/voice-room';
 import { Skeleton } from '@/components/ui/skeleton';
 import io, { Socket } from 'socket.io-client'; // Import socket.io-client and Socket type
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; // Import Alert components
+import { getCurrentUser } from '@/services/user'; // Import function to get current user details
+import type { UserProfile } from '@/services/user'; // Import UserProfile type
 
 interface Participant {
-  id: string;
+  id: string; // Socket ID
   username: string;
   avatarUrl: string;
   isMuted: boolean;
@@ -28,12 +30,14 @@ interface Participant {
 interface ChatMessage {
   id: string;
   username: string;
+  userAvatar: string; // Added user avatar
   message: string;
   timestamp: string;
 }
 
-// Placeholder for Socket.IO connection - replace with your server URL
-const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001'; // Example URL
+// Get Socket.IO server URL from environment variable
+const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+
 
 export default function VoiceRoomPage() {
   const params = useParams();
@@ -41,13 +45,14 @@ export default function VoiceRoomPage() {
   const roomId = params.roomId as string;
   const { toast } = useToast();
 
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [roomDetails, setRoomDetails] = useState<VoiceRoom | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // For initial room details fetch
   const [isAuthenticated, setIsAuthenticated] = useState(false); // For password protected rooms
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false); // Track connection state
+  const [isConnecting, setIsConnecting] = useState(false); // Track socket connection state
   const [connectionError, setConnectionError] = useState<string | null>(null); // Specific connection error state
 
 
@@ -60,6 +65,37 @@ export default function VoiceRoomPage() {
   const chatScrollAreaRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null); // Ref to store socket instance, typed
 
+   // --- Check Environment Variable ---
+  useEffect(() => {
+    if (!SOCKET_SERVER_URL) {
+      console.error("ERROR: NEXT_PUBLIC_SOCKET_URL environment variable is not set!");
+      setConnectionError("Configuration error: Socket server URL is missing. Cannot connect to voice room.");
+      toast({
+        variant: 'destructive',
+        title: 'Configuration Error',
+        description: 'The voice room server URL is not configured. Please contact support.',
+        duration: 15000,
+      });
+       setIsLoading(false); // Stop loading if URL is missing
+    }
+  }, []);
+
+   // --- Fetch Current User Details ---
+   useEffect(() => {
+       const fetchUser = async () => {
+           try {
+               const user = await getCurrentUser();
+               setCurrentUser(user);
+           } catch (err) {
+               console.error("Failed to fetch current user:", err);
+               toast({ title: "Error", description: "Could not load your user details.", variant: "destructive" });
+               // Handle case where user isn't logged in? Redirect?
+           }
+       };
+       fetchUser();
+   }, [toast]);
+
+
   // --- Fetch Room Details ---
    useEffect(() => {
     if (!roomId) return;
@@ -70,37 +106,51 @@ export default function VoiceRoomPage() {
         const details = await getVoiceRoom(roomId);
         if (details) {
           setRoomDetails(details);
+          // If room is not password protected, consider user authenticated immediately
           if (!details.passwordProtected) {
             setIsAuthenticated(true);
           }
         } else {
           toast({ title: "Error", description: "Voice room not found.", variant: "destructive" });
-          router.push('/voice-rooms');
+          router.push('/voice-rooms'); // Redirect if room doesn't exist
         }
       } catch (error) {
         console.error("Failed to fetch room details:", error);
         toast({ title: "Error", description: "Failed to load room details.", variant: "destructive" });
         router.push('/voice-rooms');
       } finally {
-        setIsLoading(false);
+        setIsLoading(false); // Finish loading room details
       }
     };
     fetchRoomDetails();
    }, [roomId, router, toast]);
 
+
   // --- Socket.IO Connection and Data Handling ---
    useEffect(() => {
-    if (!isAuthenticated || !roomId || !roomDetails || socketRef.current) return; // Prevent multiple connections
+     // Conditions to establish connection:
+     // 1. Socket URL must be defined
+     // 2. Room details must be loaded
+     // 3. User must be authenticated for the room (either not password protected or password entered)
+     // 4. Current user details must be fetched
+     // 5. Not already connecting or connected
+    if (!SOCKET_SERVER_URL || !roomDetails || !isAuthenticated || !currentUser || socketRef.current || isConnecting) {
+        // console.log("Socket connection prerequisites not met or already connected/connecting.");
+        return;
+    }
 
     setIsConnecting(true);
     setConnectionError(null);
-    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL} using polling...`);
+    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL} via Netlify path...`);
 
-    // Explicitly define transports, FORCING polling for Vercel/Serverless compatibility
+    // Explicitly define transports and path for Netlify Functions
      const socket = io(SOCKET_SERVER_URL, {
+        path: '/.netlify/functions/socket/socket.io/', // IMPORTANT: Path for Netlify functions proxy
         transports: ['polling'], // FORCE POLLING ONLY
         reconnectionAttempts: 3, // Limit reconnection attempts
         timeout: 10000, // Connection timeout
+        // You might pass user details for authentication or initial setup
+        // auth: { userId: currentUser.username, token: 'your_auth_token_if_needed' }
      });
      socketRef.current = socket;
 
@@ -109,58 +159,61 @@ export default function VoiceRoomPage() {
         console.log('Connected to Socket.IO server:', socket.id);
         setIsConnecting(false);
         setConnectionError(null);
-        // Join the specific voice room
-        socket.emit('join_voice_room', { roomId, /* send user details */ });
+        toast({ title: 'Connected', description: `Joined voice room: ${roomDetails.name}` });
 
-        // --- MOCK DATA (Remove when real-time is implemented) ---
-        const mockParticipants: Participant[] = Array.from({ length: 5 }).map((_, i) => ({
-          id: `user-${i+1}`, username: `user_${i + 1}`, avatarUrl: `https://picsum.photos/seed/vr_user${i + 1}/40/40`, isMuted: Math.random() > 0.7, isSpeaking: i === 0 || i === 2,
-        }));
-        setParticipants(mockParticipants);
-        const mockMessages: ChatMessage[] = [
-            {id: 'm1', username: 'user_1', message: 'Hey everyone!', timestamp: '10:30 AM'},
-            {id: 'm2', username: 'user_3', message: 'Welcome!', timestamp: '10:31 AM'},
-        ];
-        setChatMessages(mockMessages);
-         scrollToBottom();
-        // --- END MOCK DATA ---
+        // Join the specific voice room, sending current user details
+        socket.emit('join_voice_room', {
+            roomId,
+            user: {
+                username: currentUser.username,
+                avatarUrl: currentUser.avatarUrl
+            }
+        });
     };
 
     const handleDisconnect = (reason: string) => {
         console.log('Disconnected from Socket.IO server:', reason);
         setIsConnecting(false);
-         // Don't show error toast for intentional disconnects
+        socketRef.current = null; // Clear the ref
+         // Don't show error toast for intentional disconnects (e.g., leaving room)
         if (reason !== 'io client disconnect') {
-             setConnectionError(`Disconnected: ${reason}. Attempting to reconnect...`);
+             setConnectionError(`Disconnected: ${reason}. Check server and network.`);
              toast({ variant: 'destructive', title: 'Disconnected', description: 'Connection to the voice room lost.' });
         }
+        setParticipants([]); // Clear participants on disconnect
         // Optionally redirect or show a reconnect button
     };
 
      const handleConnectError = (error: Error) => {
-        console.error('Socket.IO connection error:', error.message, error.name);
+        console.error('Socket.IO connection error:', error.message, error.name, error);
         setIsConnecting(false);
-        const errorDetails = (error as any).type === 'TransportError' ? `(${ (error as any).description })` : ''; // Get more details if TransportError
-        setConnectionError(`Connection Error: ${error.message} ${errorDetails}. Please check server status, CORS settings, and network. Retrying...`);
+        socketRef.current = null; // Clear the ref
+        const errorDetails = (error as any).description || ''; // Get more details if TransportError
+        const errorMessage = `Connection Error: ${error.message} ${errorDetails}. Please check server status, CORS, and network. Retrying might be needed.`;
+        setConnectionError(errorMessage);
          toast({
              variant: 'destructive',
              title: 'Connection Error',
-             description: `Could not connect to the voice room server. Check server status and CORS settings. Error: ${error.message}`,
-             duration: 10000, // Show longer duration for connection errors
+             description: `Could not connect to the voice room server. Error: ${error.message}`,
+             duration: 10000,
         });
      };
 
-    const handleRoomState = (data: { participants: Participant[], messages: ChatMessage[] }) => {
+    // --- Room State Listeners ---
+    const handleRoomState = (data: { participants: Participant[], messages?: ChatMessage[] }) => {
         console.log('Received initial room state:', data);
         setParticipants(data.participants || []);
-        setChatMessages(data.messages || []);
-        scrollToBottom(); // Scroll after setting initial messages
+        setChatMessages(data.messages || []); // Initialize with existing messages
+        scrollToBottom();
     };
 
     const handleParticipantJoined = (participant: Participant) => {
         console.log('Participant joined:', participant);
-        setParticipants(prev => [...prev, participant]);
-        toast({ description: `${participant.username} joined the room.` });
+        // Prevent adding self again if server echoes join event
+        setParticipants(prev => prev.find(p => p.id === participant.id) ? prev : [...prev, participant]);
+        if (participant.username !== currentUser.username) {
+            toast({ description: `${participant.username} joined the room.` });
+        }
     };
 
      const handleParticipantLeft = (userId: string) => {
@@ -171,7 +224,9 @@ export default function VoiceRoomPage() {
             if(user) leftUsername = user.username;
             return prev.filter(p => p.id !== userId);
         });
-         toast({ description: `${leftUsername} left the room.` });
+         if(leftUsername !== currentUser?.username) { // Don't toast self leaving
+             toast({ description: `${leftUsername} left the room.` });
+         }
     };
 
      const handleNewMessage = (message: ChatMessage) => {
@@ -185,21 +240,22 @@ export default function VoiceRoomPage() {
          setParticipants(prev => prev.map(p => p.id === update.id ? { ...p, ...update } : p));
     };
 
-    // Attach listeners
+    // --- Attach listeners ---
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('connect_error', handleConnectError);
-    socket.on('room_state', handleRoomState); // For initial state
+    socket.on('room_state', handleRoomState);
     socket.on('participant_joined', handleParticipantJoined);
     socket.on('participant_left', handleParticipantLeft);
     socket.on('new_message', handleNewMessage);
-    socket.on('participant_update', handleParticipantUpdate); // For mute/speak status etc.
+    socket.on('participant_update', handleParticipantUpdate);
 
 
-    // Cleanup listeners and disconnect socket
+    // --- Cleanup listeners and disconnect socket ---
     return () => {
       if (socketRef.current) {
          console.log('Disconnecting voice room socket...');
+        // Remove specific listeners
         socketRef.current.off('connect', handleConnect);
         socketRef.current.off('disconnect', handleDisconnect);
         socketRef.current.off('connect_error', handleConnectError);
@@ -208,33 +264,38 @@ export default function VoiceRoomPage() {
         socketRef.current.off('participant_left', handleParticipantLeft);
         socketRef.current.off('new_message', handleNewMessage);
         socketRef.current.off('participant_update', handleParticipantUpdate);
+        // Disconnect
         socketRef.current.disconnect();
-        socketRef.current = null; // Clear the ref
+        socketRef.current = null;
       }
-       setIsConnecting(false); // Ensure connecting state is reset
+       setIsConnecting(false);
+       setParticipants([]); // Clear participants on unmount/disconnect
+       setChatMessages([]); // Clear messages
     };
-   // eslint-disable-next-line react-hooks/exhaustive-deps
-   }, [isAuthenticated, roomId, roomDetails]); // Removed toast from deps
+   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast]); // Dependencies
 
-  // Scroll chat to bottom
+
+  // --- Scroll chat to bottom ---
   const scrollToBottom = () => {
       const scrollArea = chatScrollAreaRef.current;
       if (scrollArea) {
         const viewport = scrollArea.querySelector('div[data-radix-scroll-area-viewport]');
         if (viewport) {
-            viewport.scrollTop = viewport.scrollHeight;
+            // Use requestAnimationFrame for smoother scrolling after DOM updates
+            requestAnimationFrame(() => {
+                 viewport.scrollTop = viewport.scrollHeight;
+            });
         }
       }
   };
 
   // Update scroll on new messages
   useEffect(() => {
-      // Delay slightly to allow DOM update
-      const timer = setTimeout(scrollToBottom, 50);
-      return () => clearTimeout(timer);
-  }, [chatMessages]);
+      scrollToBottom();
+  }, [chatMessages]); // Trigger scroll whenever messages change
 
 
+  // --- Event Handlers ---
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!password || !roomDetails) return;
@@ -243,70 +304,56 @@ export default function VoiceRoomPage() {
 
     // TODO: Replace with actual password verification via socket or API
     console.log("Verifying password for room", roomDetails.id, ":", password);
-    // Simulate verification
+    // Simulate verification (replace with real check)
     await new Promise(resolve => setTimeout(resolve, 1000));
-     // Example: Emit to socket and wait for response
-    // socketRef.current.emit('verify_password', { roomId: roomDetails.id, password }, (response) => {
-    //    if (response.success) {
-    //      setIsAuthenticated(true);
-    //      toast({ title: "Success", description: "Access granted." });
-    //    } else {
-    //      setAuthError(response.message || "Incorrect password.");
-    //      setPassword('');
-    //    }
-    //    setIsAuthLoading(false);
-    // });
+    const isCorrect = password === "password"; // **INSECURE MOCK** - Replace with real check
 
-     // Mock success for now
-     if (password === "password") { // Replace with actual check result
-       setIsAuthenticated(true);
+     if (isCorrect) { // Replace with actual check result
+       setIsAuthenticated(true); // Grant access
        toast({ title: "Success", description: "Access granted." });
      } else {
        setAuthError("Incorrect password. Please try again.");
        setPassword(''); // Clear password field on error
+       toast({ title: "Access Denied", description: "Incorrect password.", variant: "destructive" });
      }
     setIsAuthLoading(false);
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !socketRef.current || !socketRef.current.connected) return;
+    if (!newMessage.trim() || !socketRef.current || !socketRef.current.connected || !currentUser) return;
 
     console.log("Sending message:", newMessage);
-     // Send message via WebSocket
-     socketRef.current.emit('send_message', { roomId, message: newMessage });
-
-    // // Optimistic update (optional, server should broadcast back)
-    // const newMsg: ChatMessage = {
-    //     id: `temp-${Date.now()}`, // Temporary ID
-    //     username: 'current_user', // Replace with actual username
-    //     message: newMessage,
-    //     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    // };
-    // setChatMessages(prev => [...prev, newMsg]);
+     socketRef.current.emit('send_message', {
+         roomId,
+         message: newMessage,
+         // Sender info is implicitly known by the server via socket.id,
+         // but good practice to potentially send username if needed server-side beyond lookup
+         // username: currentUser.username
+      });
 
     setNewMessage('');
+    // Optimistic update is handled by the server broadcasting 'new_message' back
   };
 
   const handleLeaveRoom = () => {
     console.log("Leaving room...");
      if (socketRef.current) {
-        socketRef.current.emit('leave_voice_room', { roomId });
-        socketRef.current.disconnect(); // Disconnect socket
-        socketRef.current = null; // Clear the ref
+        // socketRef.current.emit('leave_voice_room', { roomId }); // Optionally notify server explicitly
+        socketRef.current.disconnect(); // Disconnect socket triggers cleanup
+        socketRef.current = null;
     }
     toast({ title: "Left Room", description: `You have left ${roomDetails?.name}.` });
-    router.push('/voice-rooms');
+    router.push('/voice-rooms'); // Navigate back to rooms list
   };
 
   const toggleMute = () => {
      const newMutedState = !isMuted;
      setIsMuted(newMutedState);
-     // TODO: Send mute status update via socket
      if (socketRef.current?.connected) {
-        socketRef.current.emit('update_participant', { roomId, isMuted: newMutedState });
+        socketRef.current.emit('update_participant', { roomId, updates: { isMuted: newMutedState } });
      }
-     // TODO: Actually mute/unmute local audio track using WebRTC API
+     // TODO: Actually mute/unmute local audio track using WebRTC API if implementing voice
   };
 
   const toggleDeafen = () => {
@@ -315,13 +362,17 @@ export default function VoiceRoomPage() {
      // TODO: Send deafen status update via socket (optional)
      // TODO: Actually mute/unmute incoming audio using WebRTC API or browser audio controls
      if (newDeafenedState && !isMuted) {
-         toggleMute(); // Deafen usually implies mute
+         toggleMute(); // Deafen usually implies mute as well
+     } else if (!newDeafenedState && isMuted && !/* was explicitly muted before deafen */false) {
+        // If undeafening, consider unmuting *unless* user explicitly muted themselves beforehand
+        // This requires more state tracking
      }
   };
 
 
   // --- Render Logic ---
 
+  // Loading state for initial room details
   if (isLoading) {
     return (
       <div className="container mx-auto max-w-6xl py-8 px-4 flex justify-center items-center h-screen">
@@ -330,10 +381,31 @@ export default function VoiceRoomPage() {
     );
   }
 
-  if (!roomDetails) {
-    // Fallback if redirection fails
-    return <div className="container mx-auto p-8 text-center text-destructive">Room not found or failed to load.</div>;
+  // If room details failed to load (and not due to config error handled earlier)
+  if (!roomDetails && !SOCKET_SERVER_URL) { // Show config error if URL missing
+     return (
+         <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center text-center">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Configuration Error</AlertTitle>
+                <AlertDescription>{connectionError || "Socket server URL is missing."}</AlertDescription>
+              </Alert>
+         </div>
+     );
   }
+   if (!roomDetails) {
+     // Fallback if redirection fails or room genuinely not found
+     return (
+         <div className="container mx-auto p-8 text-center">
+             <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>Room not found or failed to load.</AlertDescription>
+             </Alert>
+             <Button variant="link" onClick={() => router.push('/voice-rooms')} className="mt-4">Go back to Rooms</Button>
+         </div>
+     );
+   }
 
   // --- Password Prompt ---
   if (roomDetails.passwordProtected && !isAuthenticated) {
@@ -343,7 +415,7 @@ export default function VoiceRoomPage() {
             <Card className="w-full">
                 <CardHeader>
                     <CardTitle>Password Required</CardTitle>
-                    <p className="text-sm text-muted-foreground">This room ({roomDetails.name}) is password protected.</p>
+                    <CardDescription>This room "{roomDetails.name}" is password protected. Enter the password to join.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handlePasswordSubmit} className="space-y-4">
@@ -360,7 +432,7 @@ export default function VoiceRoomPage() {
                             {isAuthLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                             Enter Room
                         </Button>
-                         <Button variant="outline" className="w-full" onClick={() => router.back()} disabled={isAuthLoading}>
+                         <Button variant="outline" className="w-full" onClick={() => router.push('/voice-rooms')} disabled={isAuthLoading}>
                             <ArrowLeft className="mr-2 h-4 w-4" /> Back to Rooms
                         </Button>
                     </form>
@@ -373,23 +445,30 @@ export default function VoiceRoomPage() {
 
   // --- Authenticated Room View ---
   return (
-    <div className="flex h-screen bg-background text-foreground">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* Participants Sidebar */}
-      <aside className="w-64 border-r border-border flex flex-col bg-secondary/30">
+      <aside className="w-64 border-r border-border flex flex-col bg-secondary/30 flex-shrink-0">
+        {/* Header */}
         <div className="p-4 border-b border-border">
-          <h2 className="text-lg font-semibold truncate">{roomDetails.name}</h2>
-          <p className="text-sm text-muted-foreground">Participants ({participants.length})</p>
+          <h2 className="text-lg font-semibold truncate" title={roomDetails.name}>{roomDetails.name}</h2>
+          <div className="flex items-center text-sm text-muted-foreground mt-1">
+             <Users className="h-4 w-4 mr-1.5"/> Participants ({participants.length})
+          </div>
            {isConnecting && (
              <div className="flex items-center text-xs text-muted-foreground mt-1">
                 <Loader2 className="h-3 w-3 animate-spin mr-1" /> Connecting...
              </div>
            )}
-            {connectionError && !isConnecting && (
-             <p className="text-xs text-destructive mt-1">{connectionError}</p>
+           {connectionError && !isConnecting && (
+             <Alert variant="destructive" className="mt-2 p-2 text-xs">
+                <AlertCircle className="h-3 w-3"/>
+                <AlertDescription>{connectionError}</AlertDescription>
+             </Alert>
            )}
         </div>
+
+        {/* Participant List */}
         <ScrollArea className="flex-grow p-4">
-           {/* Show loading skeleton while connecting if needed */}
            {isConnecting && participants.length === 0 && (
                <div className="space-y-3">
                  {Array.from({length: 3}).map((_, i) => (
@@ -400,34 +479,43 @@ export default function VoiceRoomPage() {
                  ))}
                </div>
            )}
-          {!isConnecting && participants.length > 0 ? (
-            <ul>
+          {!isConnecting && participants.length > 0 && (
+            <ul className="space-y-3">
                 {participants.map((p) => (
-                <li key={p.id} className="flex items-center mb-3">
-                    <Avatar className={`h-10 w-10 mr-3 border-2 ${p.isSpeaking ? 'border-primary animate-pulse' : 'border-transparent'}`}>
+                <li key={p.id} className="flex items-center">
+                    <Avatar className={`h-10 w-10 mr-3 border-2 flex-shrink-0 ${p.isSpeaking ? 'border-primary animate-pulse' : 'border-transparent'}`}>
                     <AvatarImage src={p.avatarUrl} alt={p.username} data-ai-hint="person avatar"/>
                     <AvatarFallback>{p.username.charAt(0).toUpperCase()}</AvatarFallback>
                     </Avatar>
-                    <span className="flex-grow truncate text-sm font-medium">{p.username}</span>
-                    {p.isMuted && <MicOff className="h-4 w-4 text-muted-foreground ml-2 flex-shrink-0" />}
+                    <span className="flex-grow truncate text-sm font-medium" title={p.username}>{p.username}</span>
+                    {p.isMuted && <MicOff className="h-4 w-4 text-muted-foreground ml-2 flex-shrink-0" title="Muted"/>}
                 </li>
                 ))}
             </ul>
-           ) : null }
-            {!isConnecting && participants.length === 0 && (
+           )}
+            {!isConnecting && participants.length === 0 && !connectionError && (
                  <p className="text-sm text-muted-foreground text-center mt-4">Only you are here.</p>
              )}
+             {/* Render connection error message inside list if needed */}
+             {connectionError && participants.length === 0 && !isConnecting && (
+                  <p className="text-sm text-destructive text-center mt-4">Could not load participants.</p>
+             )}
         </ScrollArea>
-        {/* User Controls */}
-         <div className="p-3 border-t border-border flex items-center justify-between bg-background">
-             <div className="flex items-center overflow-hidden mr-2">
-                <Avatar className="h-8 w-8 mr-2 flex-shrink-0">
-                    {/* Replace with actual current user avatar */}
-                    <AvatarImage src={`https://picsum.photos/seed/current_user_vr/32/32`} data-ai-hint="person avatar"/>
-                    <AvatarFallback>U</AvatarFallback>
-                </Avatar>
-                {/* Replace with actual current username */}
-                <span className="text-sm font-medium truncate">current_user</span>
+
+        {/* User Controls Footer */}
+         <div className="p-3 border-t border-border flex items-center justify-between bg-background/80 backdrop-blur-sm">
+             <div className="flex items-center overflow-hidden mr-2 flex-grow min-w-0">
+                {currentUser ? (
+                    <>
+                        <Avatar className="h-8 w-8 mr-2 flex-shrink-0">
+                            <AvatarImage src={currentUser.avatarUrl} data-ai-hint="person profile"/>
+                            <AvatarFallback>{currentUser.username.charAt(0).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        <span className="text-sm font-medium truncate" title={currentUser.username}>{currentUser.username}</span>
+                    </>
+                ) : (
+                     <Skeleton className="h-8 w-8 rounded-full mr-2" />
+                )}
              </div>
              <div className="flex items-center space-x-1 flex-shrink-0">
                  <Button variant={isMuted ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'} disabled={isConnecting || !!connectionError}>
@@ -436,10 +524,10 @@ export default function VoiceRoomPage() {
                  <Button variant={isDeafened ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleDeafen} aria-label={isDeafened ? 'Undeafen' : 'Deafen'} disabled={isConnecting || !!connectionError}>
                     {isDeafened ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                  {/* <Button variant="ghost" size="icon" className="h-8 w-8">
                       <Settings className="h-4 w-4" />
                       <span className="sr-only">Settings</span>
-                  </Button>
+                  </Button> */}
                  <Button variant="destructive" size="icon" className="h-8 w-8" onClick={handleLeaveRoom} aria-label="Leave Room">
                     <PhoneOff className="h-4 w-4" />
                  </Button>
@@ -448,21 +536,26 @@ export default function VoiceRoomPage() {
       </aside>
 
       {/* Chat Area */}
-      <main className="flex-grow flex flex-col bg-background">
-        <div className="p-4 border-b border-border flex items-center justify-between">
+      <main className="flex-grow flex flex-col bg-background min-w-0"> {/* Ensure main area can shrink */}
+        {/* Chat Header (Optional) */}
+        {/* <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
              <h2 className="text-lg font-semibold">Chat</h2>
-             {/* Potential room controls (e.g., invite) could go here */}
-        </div>
-         {/* Connection Error Alert in Chat */}
+        </div> */}
+
+        {/* Connection Error Alert */}
          {connectionError && (
-            <Alert variant="destructive" className="m-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Connection Issue</AlertTitle>
-                <AlertDescription>{connectionError}</AlertDescription>
-            </Alert>
+            <div className="p-4 flex-shrink-0">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Connection Issue</AlertTitle>
+                    <AlertDescription>{connectionError}</AlertDescription>
+                </Alert>
+            </div>
          )}
+
+        {/* Message List */}
         <ScrollArea className="flex-grow p-4" ref={chatScrollAreaRef}>
-          <div className="space-y-4">
+          <div className="space-y-4 mb-4"> {/* Add bottom margin */}
             {isConnecting && chatMessages.length === 0 && (
                 <div className="flex justify-center items-center h-full text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading chat...
@@ -474,33 +567,41 @@ export default function VoiceRoomPage() {
             {chatMessages.map((msg) => (
               <div key={msg.id} className="flex items-start" data-chat-message>
                 <Avatar className="h-8 w-8 mr-3 mt-1 flex-shrink-0">
-                   {/* Use consistent avatar generation */}
-                  <AvatarImage src={`https://picsum.photos/seed/vr_${msg.username}/32/32`} alt={msg.username} data-ai-hint="person avatar"/>
+                  <AvatarImage src={msg.userAvatar || `https://picsum.photos/seed/vr_guest/32/32`} alt={msg.username} data-ai-hint="person avatar"/>
                   <AvatarFallback>{msg.username.charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
-                <div className="flex-grow">
+                <div className="flex-grow min-w-0"> {/* Allow text to wrap */}
                   <div className="flex items-baseline space-x-2">
-                      <span className="font-semibold text-sm">{msg.username}</span>
-                      <span className="text-xs text-muted-foreground">{msg.timestamp}</span>
+                      <span className="font-semibold text-sm truncate" title={msg.username}>{msg.username}</span>
+                      <span className="text-xs text-muted-foreground flex-shrink-0">{msg.timestamp}</span>
                   </div>
-                  <p className="text-sm break-words">{msg.message}</p> {/* Allow long words to break */}
+                  <p className="text-sm break-words">{msg.message}</p>
                 </div>
               </div>
             ))}
           </div>
         </ScrollArea>
-        <div className="p-4 border-t border-border bg-secondary/30">
+
+        {/* Message Input Area */}
+        <div className="p-4 border-t border-border bg-secondary/30 flex-shrink-0">
           <form className="flex items-center space-x-2" onSubmit={handleSendMessage}>
             <Input
               type="text"
-              placeholder={isDeafened ? "You are deafened" : (isConnecting || connectionError) ? "Connecting..." : "Type your message..."}
+              placeholder={isDeafened ? "You are deafened" : (isConnecting || !!connectionError) ? "Connecting..." : "Type your message..."}
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               className="flex-grow bg-background focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
-              disabled={isDeafened || isConnecting || !!connectionError}
+              disabled={isDeafened || isConnecting || !!connectionError || !socketRef.current?.connected}
               aria-label="Chat Message Input"
+              autoComplete="off"
             />
-            <Button type="submit" size="icon" className="bg-primary text-primary-foreground hover:bg-primary/90" disabled={!newMessage.trim() || isDeafened || isConnecting || !!connectionError} aria-label="Send Message">
+            <Button
+               type="submit"
+               size="icon"
+               className="bg-primary text-primary-foreground hover:bg-primary/90 flex-shrink-0"
+               disabled={!newMessage.trim() || isDeafened || isConnecting || !!connectionError || !socketRef.current?.connected}
+               aria-label="Send Message"
+            >
               <Send className="h-4 w-4" />
             </Button>
           </form>
@@ -509,4 +610,3 @@ export default function VoiceRoomPage() {
     </div>
   );
 }
-
