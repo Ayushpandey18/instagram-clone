@@ -33,7 +33,7 @@ const Sidebar = () => {
           <div className="mb-8 px-1 lg:px-3">
              <Link href="/" className="block h-8 flex items-center" aria-label="Instagram logo">
                {/* Text Logo for expanded state */}
-               <h1 className="text-2xl font-semibold hidden lg:block">InstaVoice</h1>
+               <h1 className="text-2xl font-semibold hidden lg:block">Instagram</h1>
                 {/* Icon Logo for collapsed state */}
                <div className="block lg:hidden">
                   <InstagramLogo />
@@ -77,10 +77,12 @@ const Sidebar = () => {
         <div className="mt-auto">
           <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" className="w-full justify-start p-3">
-                    <Settings className="h-6 w-6 shrink-0" />
-                    <span className="ml-4 hidden lg:block text-base">Settings</span>
-                </Button>
+                 <Link href="/settings" legacyBehavior passHref>
+                    <Button variant="ghost" className="w-full justify-start p-3">
+                        <Settings className="h-6 w-6 shrink-0" />
+                        <span className="ml-4 hidden lg:block text-base">Settings</span>
+                    </Button>
+                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right" className="lg:hidden">
                 <p>Settings</p>

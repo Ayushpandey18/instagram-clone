@@ -8,8 +8,8 @@ import { cn } from '@/lib/utils'; // Import cn utility
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata: Metadata = {
-  title: 'InstaVoice', // Updated app title
-  description: 'Instagram Clone with Voice Rooms', // Updated description
+  title: 'Instagram', // Updated app title
+  description: 'Instagram Clone with Voice Rooms', // Description can remain or be updated
 };
 
 export default function RootLayout({

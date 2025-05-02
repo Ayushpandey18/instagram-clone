@@ -161,7 +161,7 @@ const Suggestions = () => {
                         </React.Fragment>
                     ))}
                 </nav>
-                <p className="mt-4 uppercase">&copy; {new Date().getFullYear()} InstaVoice from Meta</p>
+                <p className="mt-4 uppercase">&copy; {new Date().getFullYear()} Instagram from Meta</p>
             </div>
 
         </div>
