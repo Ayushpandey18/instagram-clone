@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card } from '@/components/ui/card'; // Import Card
 import { Separator } from '@/components/ui/separator';
 import type { Post as PostType, Comment } from '@/services/post'; // Import types
 import { getPostById, getPostComments, likePost, unlikePost, addComment } from '@/services/post'; // Import service functions
@@ -352,3 +354,5 @@ export default function PostDetailPage() {
     </div>
   );
 }
+
+    
