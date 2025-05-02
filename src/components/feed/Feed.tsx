@@ -1,3 +1,4 @@
+
 import React from 'react';
 import Post from './Post';
 
@@ -40,7 +41,7 @@ const Feed = () => {
   ];
 
   return (
-    <div className="w-full max-w-xl mx-auto">
+    <div className="w-full"> {/* Removed max-width styling */}
       {posts.map((post) => (
         <Post key={post.id} {...post} />
       ))}

@@ -20,7 +20,6 @@ body {
     --secondary-foreground: 0 0% 9%; /* Dark Gray/Black */
     --muted: 0 0% 96.1%; /* Light Gray */
     --muted-foreground: 0 0% 45.1%; /* Medium Gray */
-    /* --accent is kept default, use specific classes/styles for voice room purple */
     --accent: 0 0% 96.1%; /* Light Gray */
     --accent-foreground: 0 0% 9%; /* Dark Gray/Black */
     --destructive: 0 84.2% 60.2%; /* Red */
@@ -83,26 +82,15 @@ body {
 }
 
 @layer base {
+  html {
+    @apply h-full;
+  }
   * {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground min-h-full flex flex-col; /* Ensure body takes full height */
   }
-}
-
-/* Custom class for Voice Room accent color */
-.voice-room-accent-bg {
-  background-color: #A29BFE; /* Muted Purple */
-}
-.voice-room-accent-text {
-  color: #A29BFE; /* Muted Purple */
-}
-.voice-room-accent-border {
-  border-color: #A29BFE; /* Muted Purple */
-}
-.voice-room-accent-ring:focus-visible {
-  --tw-ring-color: #A29BFE; /* Muted Purple */
 }
 
 /* Styles for Toaster */

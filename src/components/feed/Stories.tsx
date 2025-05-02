@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -12,13 +13,13 @@ const Stories = () => {
   }));
 
   return (
-    <div className="mb-6">
-       <ScrollArea className="w-full whitespace-nowrap rounded-md border">
-        <div className="flex space-x-4 p-4">
+    <div className="mb-4 py-4 bg-background border border-border rounded-lg"> {/* Added background, border, and padding */}
+       <ScrollArea className="w-full whitespace-nowrap">
+        <div className="flex space-x-4 px-4"> {/* Added horizontal padding */}
             {stories.map((story) => (
-            <div key={story.id} className="flex flex-col items-center w-16 shrink-0">
-                <div className={`p-0.5 rounded-full ${story.hasNewStory ? 'bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-600' : ''}`}>
-                <Avatar className="h-14 w-14 border-2 border-background">
+            <div key={story.id} className="flex flex-col items-center w-16 shrink-0 cursor-pointer"> {/* Made clickable */}
+                <div className={`p-0.5 rounded-full ${story.hasNewStory ? 'bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-600' : 'bg-gray-300'}`}> {/* Added fallback bg */}
+                <Avatar className="h-14 w-14 border-2 border-background bg-background"> {/* Ensure avatar BG matches page BG */}
                     <AvatarImage src={story.avatarUrl} alt={`${story.username}'s story`} data-ai-hint="person story"/>
                     <AvatarFallback>{story.username.charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
@@ -27,7 +28,7 @@ const Stories = () => {
             </div>
             ))}
         </div>
-        <ScrollBar orientation="horizontal" />
+        <ScrollBar orientation="horizontal" className="h-1.5" /> {/* Made scrollbar thinner */}
        </ScrollArea>
     </div>
   );

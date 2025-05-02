@@ -1,3 +1,4 @@
+
 import React from 'react';
 import Link from 'next/link';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -19,7 +20,7 @@ const Suggestions = () => {
     }));
 
     return (
-        <div className="mt-8 sticky top-16">
+        <div className="mt-0"> {/* Removed top margin */}
             {/* Current User Info */}
             <div className="flex items-center mb-5">
                 <Avatar className="h-14 w-14 mr-4">
@@ -38,13 +39,15 @@ const Suggestions = () => {
             {/* Suggestions Header */}
             <div className="flex justify-between items-center mb-4">
                 <p className="font-semibold text-sm text-muted-foreground">Suggested for you</p>
-                <Button variant="link" size="sm" className="text-xs font-semibold text-foreground p-0 h-auto">See All</Button>
+                 <Link href="/explore/people" className="text-xs font-semibold text-foreground hover:text-muted-foreground p-0 h-auto">
+                   See All
+                 </Link>
             </div>
 
             {/* Suggestion List */}
-            <div>
+            <div className="space-y-3"> {/* Added space between suggestions */}
                 {suggestions.map((user) => (
-                    <div key={user.id} className="flex items-center mb-3">
+                    <div key={user.id} className="flex items-center">
                         <Avatar className="h-8 w-8 mr-3">
                             <AvatarImage src={user.avatarUrl} alt={`${user.username}'s avatar`} data-ai-hint="person profile"/>
                             <AvatarFallback>{user.username.charAt(0).toUpperCase()}</AvatarFallback>
@@ -61,13 +64,15 @@ const Suggestions = () => {
             </div>
 
              {/* Footer Links */}
-            <div className="mt-6 text-xs text-muted-foreground">
-                <nav className="flex flex-wrap gap-x-2">
-                    {['About', 'Help', 'Press', 'API', 'Jobs', 'Privacy', 'Terms', 'Locations', 'Language'].map(link => (
-                        <Link href="#" key={link} className="hover:underline">{link}</Link>
+            <div className="mt-8 text-xs text-muted-foreground"> {/* Increased top margin */}
+                <nav className="flex flex-wrap gap-x-2 gap-y-0.5"> {/* Added gap-y */}
+                    {['About', 'Help', 'Press', 'API', 'Jobs', 'Privacy', 'Terms', 'Locations', 'Language', 'Meta Verified'].map(link => (
+                        <Link href="#" key={link} className="hover:underline after:content-['·'] after:ml-1.5 last:after:content-none">
+                            {link}
+                        </Link>
                     ))}
                 </nav>
-                <p className="mt-4">&copy; {new Date().getFullYear()} INSTAVOICE FROM META</p>
+                <p className="mt-4 uppercase">&copy; {new Date().getFullYear()} InstaVoice from Meta</p>
             </div>
 
         </div>
