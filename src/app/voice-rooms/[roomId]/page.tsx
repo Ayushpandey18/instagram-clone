@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -86,8 +87,10 @@ export default function VoiceRoomPage() {
    useEffect(() => {
     if (!isAuthenticated || !roomId || !roomDetails) return;
 
-    console.log(`Attempting to connect to Socket.IO for room ${roomId}...`);
-    socketRef.current = io(SOCKET_SERVER_URL);
+    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL}...`);
+    // Explicitly define transports
+    socketRef.current = io(SOCKET_SERVER_URL, { transports: ['websocket', 'polling'] });
+
 
     const handleConnect = () => {
         console.log('Connected to Socket.IO server:', socketRef.current.id);
@@ -116,7 +119,12 @@ export default function VoiceRoomPage() {
 
      const handleConnectError = (error: Error) => {
         console.error('Socket.IO connection error:', error);
-        toast({ variant: 'destructive', title: 'Connection Error', description: 'Could not connect to the voice room server.' });
+         toast({
+             variant: 'destructive',
+             title: 'Connection Error',
+             description: `Could not connect to the voice room server at ${SOCKET_SERVER_URL}. Check server status and CORS settings. Error: ${error.message}`,
+             duration: 10000, // Show longer duration for connection errors
+        });
      };
 
     const handleRoomState = (data: { participants: Participant[], messages: ChatMessage[] }) => {
@@ -180,7 +188,8 @@ export default function VoiceRoomPage() {
         socketRef.current.disconnect();
       }
     };
-   }, [isAuthenticated, roomId, roomDetails, toast]); // Dependencies for socket connection
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [isAuthenticated, roomId, roomDetails]); // Removed toast from deps
 
   // Scroll chat to bottom
   const scrollToBottom = () => {

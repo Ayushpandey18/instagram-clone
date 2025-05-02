@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -9,6 +10,7 @@ import { Video, Mic, MicOff, VideoOff, Radio, Loader2, AlertTriangle } from 'luc
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import io from 'socket.io-client'; // Import socket.io-client
+import { cn } from '@/lib/utils';
 
 // Placeholder for Socket.IO connection - replace with your server URL
 // In a real app, this URL should come from configuration
@@ -89,8 +91,10 @@ export default function LivePage() {
    useEffect(() => {
     // Connect only if permissions are granted (or potentially allow joining without streaming)
     if (hasCameraPermission === true && hasMicPermission === true) {
-        console.log('Attempting to connect to Socket.IO server...');
-        socketRef.current = io(SOCKET_SERVER_URL);
+        console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL}...`);
+        // Explicitly define transports, prioritizing WebSocket
+        socketRef.current = io(SOCKET_SERVER_URL, { transports: ['websocket', 'polling'] });
+
 
         socketRef.current.on('connect', () => {
             console.log('Connected to Socket.IO server:', socketRef.current.id);
@@ -107,7 +111,12 @@ export default function LivePage() {
 
         socketRef.current.on('connect_error', (error: Error) => {
             console.error('Socket.IO connection error:', error);
-            toast({ variant: 'destructive', title: 'Connection Error', description: 'Could not connect to the live server.' });
+             toast({
+                variant: 'destructive',
+                title: 'Connection Error',
+                description: `Could not connect to the live server at ${SOCKET_SERVER_URL}. Please ensure the server is running and check CORS settings. Error: ${error.message}`,
+                duration: 10000 // Show longer duration for connection errors
+            });
         });
 
         // --- Add other socket event listeners here ---
@@ -121,8 +130,16 @@ export default function LivePage() {
             socketRef.current.disconnect();
           }
         };
+    } else {
+        // Ensure socket is disconnected if permissions are revoked or not initially granted
+         if (socketRef.current) {
+            console.log('Disconnecting socket due to missing permissions...');
+            socketRef.current.disconnect();
+            socketRef.current = null;
+        }
     }
-   }, [hasCameraPermission, hasMicPermission, isLive, toast]); // Re-run if permissions change or live status changes
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [hasCameraPermission, hasMicPermission, toast]); // Removed isLive and toast from dependencies to avoid reconnect loops
 
 
   const handleGoLive = () => {
@@ -131,7 +148,9 @@ export default function LivePage() {
        return;
     }
      if (!socketRef.current || !socketRef.current.connected) {
-        toast({ variant: 'destructive', title: 'Not Connected', description: 'Cannot go live. Not connected to the live server.' });
+        toast({ variant: 'destructive', title: 'Not Connected', description: 'Cannot go live. Not connected to the live server. Please check the connection.' });
+        // Attempt to reconnect? Or guide user?
+        // if (socketRef.current) socketRef.current.connect(); // Be careful with auto-reconnect logic
         return;
     }
 
@@ -169,7 +188,9 @@ export default function LivePage() {
          stream.getAudioTracks().forEach(track => track.enabled = !track.enabled);
          setIsMuted(!isMuted);
          // TODO: Emit mute status change via Socket.IO if needed
-         // socketRef.current.emit('mute_status', { muted: !isMuted });
+         if (socketRef.current?.connected) {
+            socketRef.current.emit('mute_status', { muted: !isMuted });
+         }
      }
   };
 
@@ -179,7 +200,9 @@ export default function LivePage() {
          stream.getVideoTracks().forEach(track => track.enabled = !track.enabled);
          setIsVideoOff(!isVideoOff);
           // TODO: Emit video status change via Socket.IO if needed
-         // socketRef.current.emit('video_status', { videoOff: !isVideoOff });
+         if (socketRef.current?.connected) {
+            socketRef.current.emit('video_status', { videoOff: !isVideoOff });
+         }
      }
   };
 
@@ -236,7 +259,7 @@ export default function LivePage() {
                     <Button
                       size="lg"
                       onClick={handleGoLive}
-                      disabled={isLoading}
+                      disabled={isLoading || !socketRef.current?.connected} // Also disable if not connected
                       className="bg-red-600 hover:bg-red-700 text-white"
                     >
                       {isLoading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Radio className="mr-2 h-5 w-5" />}
