@@ -40,7 +40,7 @@ export default function LivePage() {
         duration: 15000,
       });
     }
-  }, []);
+  }, [toast]); // Added toast dependency
 
 
   // --- Request Camera and Microphone Permissions ---
@@ -170,17 +170,23 @@ export default function LivePage() {
         }
     };
 
-    const handleConnectError = (error: Error) => {
-        console.error('Socket.IO connection error:', error.message, error.name, error);
+    const handleConnectError = (error: any) => { // Use 'any' to access potential transport details
+        console.error('Socket.IO connection error:', error);
         setIsConnecting(false);
         socketRef.current = null; // Clear the ref on error
 
         // Provide more specific feedback based on the error type if possible
         let detailedMessage = `Failed to connect to the live server. Error: ${error.message}.`;
-        if (error.message.includes('xhr poll error')) {
-            detailedMessage += ` Possible causes: Server offline at ${SOCKET_SERVER_URL}, CORS issues, or network problems.`;
-        } else if (error.message.includes('websocket error')) {
-             detailedMessage += ` WebSocket connection failed. Polling fallback might be attempted.`;
+        // Check for specific transport errors like 'xhr poll error'
+        if (error && error.message && error.message.toLowerCase().includes('poll error')) {
+            detailedMessage = `Connection Error: ${error.message}. Please check server status at ${SOCKET_SERVER_URL}, CORS configuration, and network connectivity. Retrying might be needed.`;
+        } else if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
+             detailedMessage += ` WebSocket connection failed (expected on serverless, polling fallback should occur).`;
+        } else if (error instanceof Error) {
+            // Generic error message
+            detailedMessage = `Connection Error: ${error.message}. Please check server status and network.`;
+        } else {
+             detailedMessage = `An unknown connection error occurred. Please check server status and network.`;
         }
 
         setConnectionError(detailedMessage);
@@ -216,7 +222,7 @@ export default function LivePage() {
        setIsConnecting(false); // Ensure connecting state is reset
     };
   // Only reconnect if URL, permissions status change, or connection state requires it
-  }, [SOCKET_SERVER_URL, hasCameraPermission, hasMicPermission, toast, isLive]);
+  }, [SOCKET_SERVER_URL, hasCameraPermission, hasMicPermission, toast, isLive, isConnecting]); // Added isConnecting to dependencies
 
 
   const handleGoLive = () => {

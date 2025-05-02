@@ -78,7 +78,7 @@ export default function VoiceRoomPage() {
       });
        setIsLoading(false); // Stop loading if URL is missing
     }
-  }, []);
+  }, [toast]); // Added toast dependency
 
    // --- Fetch Current User Details ---
    useEffect(() => {
@@ -184,17 +184,25 @@ export default function VoiceRoomPage() {
         // Optionally redirect or show a reconnect button
     };
 
-     const handleConnectError = (error: Error) => {
-        console.error('Socket.IO connection error:', error.message, error.name, error);
+     const handleConnectError = (error: any) => { // Use 'any' to access potential transport details
+        console.error('Socket.IO connection error:', error);
         setIsConnecting(false);
         socketRef.current = null; // Clear the ref
-        const errorDetails = (error as any).description || ''; // Get more details if TransportError
-        const errorMessage = `Connection Error: ${error.message} ${errorDetails}. Please check server status, CORS, and network. Retrying might be needed.`;
+
+        let errorMessage = `Could not connect to the voice room server. Error: ${error.message || 'Unknown error'}`;
+        if (error && error.message && error.message.toLowerCase().includes('poll error')) {
+            errorMessage = `Connection Error: ${error.message}. Please check server status at ${SOCKET_SERVER_URL}, CORS configuration, and network connectivity. Retrying might be needed.`;
+        } else if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
+            errorMessage = `WebSocket connection failed (expected on serverless, polling should work). Error: ${error.message}`;
+        } else if (error instanceof Error) {
+             errorMessage = `Connection Error: ${error.message}. Please check server status and network.`;
+        }
+
         setConnectionError(errorMessage);
          toast({
              variant: 'destructive',
              title: 'Connection Error',
-             description: `Could not connect to the voice room server. Error: ${error.message}`,
+             description: errorMessage,
              duration: 10000,
         });
      };
@@ -272,7 +280,7 @@ export default function VoiceRoomPage() {
        setParticipants([]); // Clear participants on unmount/disconnect
        setChatMessages([]); // Clear messages
     };
-   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast]); // Dependencies
+   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, isConnecting]); // Dependencies, added isConnecting
 
 
   // --- Scroll chat to bottom ---
