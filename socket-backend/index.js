@@ -98,6 +98,7 @@ app.post('/api/rooms', (req, res) => {
     id: newRoom.id,
     name: newRoom.name,
     passwordProtected: newRoom.passwordProtected,
+    participantCount: 0, // Initial participant count is 0
   });
 });
 
@@ -130,6 +131,7 @@ app.post('/api/rooms/:roomId/verify', (req, res) => {
 // --- Socket.IO Logic ---
 io.on("connection", (socket) => {
   console.log(`User connected via WebSocket: ${socket.id}`);
+  let currentRoomId = null; // Keep track of the room the socket is in
 
   // **Live Streaming Events (from /live page) - Basic handling**
    socket.on('start_live', (data) => {
@@ -157,11 +159,15 @@ io.on("connection", (socket) => {
   socket.on("join_voice_room", ({ roomId, user }) => {
     if (!roomId || !rooms[roomId] || !user || !user.username) {
        console.warn("Invalid join_voice_room request:", { roomId, roomExists: !!rooms[roomId], user });
-       // Optionally emit an error back to the client
        socket.emit('join_error', { message: 'Invalid room or user details provided.' });
        return;
     }
+    // Leave previous room if any
+    if (currentRoomId) {
+       handleLeave(currentRoomId, socket);
+    }
 
+    currentRoomId = roomId; // Set current room ID
     socket.join(roomId);
     console.log(`User ${socket.id} (${user.username}) joined room ${roomId}`);
 
@@ -174,11 +180,20 @@ io.on("connection", (socket) => {
        isSpeaking: false,
     };
 
-    // Send current room state (participants and messages) to the joining user
+     // Send current room state (participants and messages) to the joining user
+     // Also send IDs of existing users for WebRTC initiation
+     const existingParticipants = Object.entries(rooms[roomId].participants)
+        .map(([id, data]) => ({ id, ...data }));
+    const existingParticipantIds = existingParticipants
+        .filter(p => p.id !== socket.id) // Exclude self
+        .map(p => p.id);
+
     socket.emit('room_state', {
-      participants: Object.entries(rooms[roomId].participants).map(([id, data]) => ({ id, ...data })),
-      messages: rooms[roomId].messages || [] // Send existing messages or empty array
+      participants: existingParticipants,
+      messages: rooms[roomId].messages || [], // Send existing messages or empty array
+      existingParticipantIds: existingParticipantIds, // Send IDs for WebRTC
     });
+
 
     // Notify others in the room about the new participant
     socket.to(roomId).emit('participant_joined', {
@@ -186,8 +201,9 @@ io.on("connection", (socket) => {
        ...rooms[roomId].participants[socket.id]
     });
 
-     // Also broadcast the updated participant count via API route potentially, or another socket event?
-     // For simplicity, client joining can infer count change from participant_joined
+     // Broadcast updated participant count
+    broadcastParticipantCount(roomId);
+
   });
 
   socket.on("send_message", ({ roomId, message }) => {
@@ -231,17 +247,67 @@ io.on("connection", (socket) => {
        console.log(`Participant update in room ${roomId} for ${socket.id}:`, updates);
   });
 
-  socket.on("leave_voice_room", ({ roomId }) => {
-        handleLeave(roomId, socket);
+  // --- WebRTC Signaling ---
+  socket.on('webrtc_offer', ({ targetSocketId, offer }) => {
+    console.log(`Relaying WebRTC offer from ${socket.id} to ${targetSocketId}`);
+    // Only relay if sender is in a room
+    if (currentRoomId && rooms[currentRoomId]?.participants?.[socket.id]) {
+      socket.to(targetSocketId).emit('webrtc_offer', {
+        senderSocketId: socket.id,
+        offer: offer
+      });
+    } else {
+      console.warn(`Offer relay rejected: Sender ${socket.id} not in a valid room.`);
+    }
+  });
+
+  socket.on('webrtc_answer', ({ targetSocketId, answer }) => {
+    console.log(`Relaying WebRTC answer from ${socket.id} to ${targetSocketId}`);
+    // Only relay if sender is in a room
+    if (currentRoomId && rooms[currentRoomId]?.participants?.[socket.id]) {
+        socket.to(targetSocketId).emit('webrtc_answer', {
+            senderSocketId: socket.id,
+            answer: answer
+        });
+    } else {
+        console.warn(`Answer relay rejected: Sender ${socket.id} not in a valid room.`);
+    }
+  });
+
+  socket.on('webrtc_ice_candidate', ({ targetSocketId, candidate }) => {
+    // console.log(`Relaying ICE candidate from ${socket.id} to ${targetSocketId}`); // Can be very noisy
+    // Only relay if sender is in a room
+     if (currentRoomId && rooms[currentRoomId]?.participants?.[socket.id]) {
+        socket.to(targetSocketId).emit('webrtc_ice_candidate', {
+            senderSocketId: socket.id,
+            candidate: candidate
+        });
+     } else {
+        // console.warn(`ICE candidate relay rejected: Sender ${socket.id} not in a valid room.`);
+     }
+  });
+
+
+  socket.on("leave_voice_room", () => { // No need for roomId here, use currentRoomId
+        if (currentRoomId) {
+             handleLeave(currentRoomId, socket);
+             currentRoomId = null; // Reset current room
+        }
   });
 
   socket.on("disconnect", (reason) => {
     console.log(`User disconnected: ${socket.id}, Reason: ${reason}`);
-    // Find which room the user was in and notify others
-    for (const roomId in rooms) {
-        if (rooms[roomId]?.participants?.[socket.id]) { // Check if participants exist and user is in it
-             handleLeave(roomId, socket, true); // Pass true to indicate disconnect cleanup
-             break; // Assuming user can only be in one room
+    // Find which room the user was in (using stored currentRoomId is simpler)
+    if (currentRoomId) {
+         handleLeave(currentRoomId, socket, true); // Pass true for disconnect cleanup
+         currentRoomId = null; // Reset current room
+    } else {
+        // If currentRoomId is null, check all rooms (fallback, less efficient)
+        for (const roomId in rooms) {
+            if (rooms[roomId]?.participants?.[socket.id]) {
+                handleLeave(roomId, socket, true);
+                break; // Assuming user can only be in one room
+            }
         }
     }
   });
@@ -249,6 +315,8 @@ io.on("connection", (socket) => {
   // General error handler for the socket
   socket.on('error', (error) => {
     console.error(`Socket Error (${socket.id}):`, error);
+    // Maybe notify the client?
+    socket.emit('socket_error', { message: 'An internal socket error occurred.' });
   });
 
 });
@@ -264,10 +332,16 @@ function handleLeave(roomId, socket, isDisconnect = false) {
     const username = rooms[roomId].participants[socket.id].username; // Get username before deleting
     console.log(`User ${socket.id} (${username}) left room ${roomId}`);
     socket.leave(roomId); // Socket leaves the room channel
-    delete rooms[roomId].participants[socket.id]; // Remove participant from room data
 
     // Notify others in the room that the participant left
     socket.to(roomId).emit('participant_left', socket.id);
+
+    // Remove participant from room data *after* notifying others
+    delete rooms[roomId].participants[socket.id];
+
+    // Broadcast updated participant count *after* removing the participant
+    broadcastParticipantCount(roomId);
+
 
    // Clean up room if empty and no persistent storage is used
    if (Object.keys(rooms[roomId].participants).length === 0) {
@@ -275,7 +349,20 @@ function handleLeave(roomId, socket, isDisconnect = false) {
         // For in-memory, we delete it.
         delete rooms[roomId];
         console.log(`Room ${roomId} is now empty and removed.`);
+        // TODO: Potentially notify listing clients that room was removed
+        // io.emit('room_removed', roomId); // Example
    }
+}
+
+// Helper function to broadcast participant count changes
+function broadcastParticipantCount(roomId) {
+    if (rooms[roomId]) {
+        const count = Object.keys(rooms[roomId].participants).length;
+        // Option 1: Emit a specific event for count updates
+        io.to(roomId).emit('participant_count_update', { roomId, count });
+        console.log(`Broadcasted participant count for room ${roomId}: ${count}`);
+        // Option 2: Could also update the general room listing if needed (more complex)
+    }
 }
 
 

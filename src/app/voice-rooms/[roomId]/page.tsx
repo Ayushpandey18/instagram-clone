@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -12,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { PhoneOff, Send, Mic, MicOff, Volume2, VolumeX, Lock, Loader2, ArrowLeft, Settings, AlertCircle, User, Users } from 'lucide-react'; // Added User, Users, AlertCircle
 import { useToast } from "@/hooks/use-toast";
 import type { VoiceRoom } from '@/services/voice-room'; // Import type only
-// Removed unused verifyRoomPassword import from service, now uses API call directly in component
 import { getVoiceRoom, verifyRoomPassword } from '@/services/voice-room';
 import { Skeleton } from '@/components/ui/skeleton';
 import io, { Socket } from 'socket.io-client'; // Import socket.io-client and Socket type
@@ -37,15 +35,17 @@ interface ChatMessage {
 }
 
 // Get Socket.IO server URL from environment variable
-// This should be the BASE URL (e.g., https://your-railway-app.up.railway.app)
 const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
-// Log if the variable is missing during build or server-side, but don't throw error immediately.
-// The error will be thrown by functions that need it if it's still missing at runtime.
-if (typeof window === 'undefined' && !SOCKET_SERVER_URL) {
-  console.warn("Warning: NEXT_PUBLIC_SOCKET_URL environment variable is not set. Socket connections will fail.");
-}
-
+// --- WebRTC Configuration ---
+// Use public STUN servers (Google's are commonly used)
+const iceServers = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        // Add TURN servers here if needed for NAT traversal issues
+    ],
+};
 
 export default function VoiceRoomPage() {
   const params = useParams();
@@ -55,31 +55,33 @@ export default function VoiceRoomPage() {
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [roomDetails, setRoomDetails] = useState<VoiceRoom | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // For initial room details fetch
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // For password protected rooms
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false); // Track socket connection state
-  const [connectionError, setConnectionError] = useState<string | null>(null); // Specific connection error state
-  const [configError, setConfigError] = useState<string | null>(null); // State for configuration errors
-
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
 
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isMuted, setIsMuted] = useState(false);
-  const [isDeafened, setIsDeafened] = useState(false);
+  const [isDeafened, setIsDeafened] = useState(false); // Tracks local deafen state
 
   const chatScrollAreaRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<Socket | null>(null); // Ref to store socket instance, typed
-  const prevMessagesCountRef = useRef(0); // Ref to track previous message count for scrolling logic
+  const socketRef = useRef<Socket | null>(null);
+  const peerConnections = useRef<Record<string, RTCPeerConnection>>({}); // Store peer connections { targetSocketId: RTCPeerConnection }
+  const localStreamRef = useRef<MediaStream | null>(null); // Store local audio stream
+  const remoteAudioRefs = useRef<Record<string, HTMLAudioElement>>({}); // Store remote audio elements { targetSocketId: HTMLAudioElement }
+  const prevMessagesCountRef = useRef(0);
 
    // --- Check Environment Variable ---
    useEffect(() => {
     if (!SOCKET_SERVER_URL) {
         const errorMsg = "Configuration error: Socket server URL is missing. Cannot connect to voice room.";
-        setConfigError(errorMsg); // Set specific config error state
+        setConfigError(errorMsg);
         toast({
             variant: 'destructive',
             title: 'Configuration Error',
@@ -102,17 +104,14 @@ export default function VoiceRoomPage() {
                     setCurrentUser(user);
                } else {
                    toast({ title: "Authentication Error", description: "Could not load user details. Please log in.", variant: "destructive" });
-                   // Redirect to login or handle appropriately
                    router.push('/'); // Example redirect
                }
            } catch (err) {
                console.error("Failed to fetch current user:", err);
                toast({ title: "Error", description: "Could not load your user details.", variant: "destructive" });
-               // Handle case where user isn't logged in? Redirect?
                router.push('/'); // Example redirect
            }
        };
-       // Only fetch user if there's no config error
        if (!configError) {
            fetchUser();
        }
@@ -121,7 +120,6 @@ export default function VoiceRoomPage() {
 
   // --- Fetch Room Details ---
    useEffect(() => {
-    // Don't fetch if URL is missing or user not loaded yet
     if (!roomId || !currentUser || configError) return;
 
     const fetchRoomDetails = async () => {
@@ -131,7 +129,6 @@ export default function VoiceRoomPage() {
         const details = await getVoiceRoom(roomId); // Uses API now
         if (details) {
           setRoomDetails(details);
-          // If room is not password protected, consider user authenticated immediately
           if (!details.passwordProtected) {
             setIsAuthenticated(true);
           }
@@ -141,7 +138,6 @@ export default function VoiceRoomPage() {
         }
       } catch (error: any) { // Catch specific error type
         console.error("Failed to fetch room details:", error);
-        // Check if it's the config error we already handled
         if (error.message?.includes("Backend API URL is not configured")) {
              setConfigError(error.message); // Ensure config error state is set
              toast({ title: "Configuration Error", description: error.message, variant: "destructive", duration: 15000 });
@@ -157,176 +153,370 @@ export default function VoiceRoomPage() {
    }, [roomId, router, toast, currentUser, configError]); // Added configError dependency
 
 
-  // --- Socket.IO Connection and Data Handling ---
-   useEffect(() => {
-     // Conditions to establish connection:
-     // 1. Socket URL must be defined (checked by configError being null)
-     // 2. Room details must be loaded
-     // 3. User must be authenticated for the room
-     // 4. Current user details must be fetched
-     // 5. Not already connecting or connected
-    if (configError || !roomDetails || !isAuthenticated || !currentUser) {
-        return;
-    }
+    // --- Initialize Local Media Stream ---
+    useEffect(() => {
+        // Only get media stream if authenticated and not already obtained
+        if (!isAuthenticated || localStreamRef.current || configError || !currentUser) return;
 
-    // **Guard Condition:** Prevent reconnection if already connected or connecting
-    if (socketRef.current || isConnecting) {
-        console.log("Socket connection attempt skipped: Already connected or connecting.");
-        return;
-    }
-
-    setIsConnecting(true);
-    setConnectionError(null);
-    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL} using WebSockets only...`);
-
-    // Connect to the Socket.IO server using the base URL
-     const socket = io(SOCKET_SERVER_URL!, { // Use non-null assertion as we checked configError
-        transports: ['websocket'], // Use ONLY WebSocket transport
-        reconnectionAttempts: 3,
-        timeout: 10000,
-     });
-     socketRef.current = socket;
-
-
-    const handleConnect = () => {
-        console.log('Connected to Socket.IO server:', socket.id, 'using transport:', socket.io.engine.transport.name);
-        setIsConnecting(false);
-        setConnectionError(null);
-        toast({ title: 'Connected', description: `Joined voice room: ${roomDetails.name}` });
-
-        socket.emit('join_voice_room', {
-            roomId,
-            user: {
-                username: currentUser.username,
-                avatarUrl: currentUser.avatarUrl
-            }
-        });
-    };
-
-    const handleDisconnect = (reason: string) => {
-        console.log('Disconnected from Socket.IO server:', reason);
-        setIsConnecting(false);
-        socketRef.current = null;
-        if (reason !== 'io client disconnect') {
-             setConnectionError(`Disconnected: ${reason}. Check server and network.`);
-             toast({ variant: 'destructive', title: 'Disconnected', description: 'Connection to the voice room lost.' });
-        }
-        setParticipants([]);
-    };
-
-     const handleConnectError = (error: any) => {
-        console.error('Socket.IO connection error (WebSocket):', error);
-        setIsConnecting(false);
-        socketRef.current = null;
-
-        let errorMessage = `Could not connect to the voice room server (${SOCKET_SERVER_URL}) via WebSocket. Error: ${error.message || 'Unknown error'}`;
-        // Add specific checks for common websocket errors if needed
-        if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
-            errorMessage = `WebSocket connection failed. Ensure the server allows WebSocket upgrades and check network/firewall settings. Error: ${error.message}`;
-        }
-
-        setConnectionError(errorMessage);
-         toast({
-             variant: 'destructive',
-             title: 'Connection Error',
-             description: errorMessage,
-             duration: 10000,
-        });
-     };
-
-    // --- Room State Listeners ---
-    const handleRoomState = (data: { participants: Participant[], messages?: ChatMessage[] }) => {
-        console.log('Received initial room state:', data);
-        setParticipants(data.participants || []);
-        setChatMessages(data.messages || []);
-        prevMessagesCountRef.current = data.messages?.length || 0;
-    };
-
-    const handleParticipantJoined = (participant: Participant) => {
-        console.log('Participant joined:', participant);
-        // Prevent adding self again if server echoes join event
-        setParticipants(prev => prev.find(p => p.id === participant.id) ? prev : [...prev, participant]);
-        if (participant.username !== currentUser.username) { // Check against currentUser
-            toast({ description: `${participant.username} joined the room.` });
-        }
-    };
-
-     const handleParticipantLeft = (userId: string) => {
-        console.log('Participant left:', userId);
-        let leftUsername = 'Someone';
-        setParticipants(prev => {
-            const user = prev.find(p => p.id === userId);
-            if(user) leftUsername = user.username;
-            return prev.filter(p => p.id !== userId);
-        });
-         if(leftUsername !== currentUser.username) {
-             toast({ description: `${leftUsername} left the room.` });
-         }
-    };
-
-     const handleNewMessage = (message: ChatMessage) => {
-        console.log('New message received:', message);
-        setChatMessages(prev => [...prev, message]);
-    };
-
-    const handleParticipantUpdate = (update: Partial<Participant> & { id: string }) => {
-        console.log('Participant update:', update);
-         setParticipants(prev => prev.map(p => p.id === update.id ? { ...p, ...update } : p));
-    };
-
-    // --- Attach listeners ---
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-    socket.on('connect_error', handleConnectError);
-    socket.on('room_state', handleRoomState);
-    socket.on('participant_joined', handleParticipantJoined);
-    socket.on('participant_left', handleParticipantLeft);
-    socket.on('new_message', handleNewMessage);
-    socket.on('participant_update', handleParticipantUpdate);
-
-
-    // --- Cleanup listeners and disconnect socket ---
-    return () => {
-      if (socketRef.current) {
-         console.log('Disconnecting voice room socket...');
-        socketRef.current.off('connect', handleConnect);
-        socketRef.current.off('disconnect', handleDisconnect);
-        socketRef.current.off('connect_error', handleConnectError);
-        socketRef.current.off('room_state', handleRoomState);
-        socketRef.current.off('participant_joined', handleParticipantJoined);
-        socketRef.current.off('participant_left', handleParticipantLeft);
-        socketRef.current.off('new_message', handleNewMessage);
-        socketRef.current.off('participant_update', handleParticipantUpdate);
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-       setIsConnecting(false);
-       setParticipants([]);
-       setChatMessages([]);
-    };
-   // Added configError to dependencies
-   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError]);
-
-
-  // --- Scroll chat to bottom ---
-  const scrollToBottom = useCallback(() => {
-      const scrollArea = chatScrollAreaRef.current;
-      if (scrollArea) {
-        const viewport = scrollArea.querySelector('div[data-radix-scroll-area-viewport]');
-        if (viewport) {
-            requestAnimationFrame(() => {
-                 viewport.scrollTop = viewport.scrollHeight;
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+            .then(stream => {
+                console.log("Local audio stream obtained.");
+                localStreamRef.current = stream;
+                // Mute initially based on state
+                stream.getAudioTracks().forEach(track => track.enabled = !isMuted);
+                // After getting stream, proceed to socket connection (if not already connecting)
+                if (!socketRef.current && !isConnecting) {
+                    // Trigger socket connection logic here or let the main useEffect handle it
+                    console.log("Local stream ready, proceeding to connect socket.");
+                }
+            })
+            .catch(err => {
+                console.error("Error getting user media:", err);
+                toast({
+                    variant: 'destructive',
+                    title: 'Microphone Access Error',
+                    description: 'Could not access microphone. Please check permissions and refresh.',
+                    duration: 10000
+                });
+                setConnectionError("Microphone access denied or unavailable.");
+                // Prevent further connection attempts if mic fails?
             });
-        }
-      }
-  }, []);
 
-  useEffect(() => {
-      if (chatMessages.length > prevMessagesCountRef.current) {
-          scrollToBottom();
-      }
-      prevMessagesCountRef.current = chatMessages.length;
-  }, [chatMessages, scrollToBottom]);
+        // Cleanup: Stop tracks when component unmounts or user leaves
+        return () => {
+            console.log("Stopping local media tracks.");
+            localStreamRef.current?.getTracks().forEach(track => track.stop());
+            localStreamRef.current = null;
+        };
+    }, [isAuthenticated, isMuted, toast, configError, currentUser, isConnecting]); // Added currentUser and isConnecting
+
+
+    // --- WebRTC Peer Connection Management ---
+    const createPeerConnection = useCallback((targetSocketId: string) => {
+        if (peerConnections.current[targetSocketId] || !socketRef.current || !localStreamRef.current) {
+             console.warn(`Peer connection already exists or socket/stream not ready for ${targetSocketId}`);
+             return;
+        }
+        console.log(`Creating peer connection to ${targetSocketId}`);
+
+        const pc = new RTCPeerConnection(iceServers);
+        peerConnections.current[targetSocketId] = pc;
+
+        // Add local stream tracks to the connection
+        localStreamRef.current.getTracks().forEach(track => {
+            pc.addTrack(track, localStreamRef.current!);
+        });
+
+        // Handle ICE candidates: Send them to the peer via signaling server
+        pc.onicecandidate = (event) => {
+            if (event.candidate && socketRef.current?.connected) {
+                 // console.log(`Sending ICE candidate to ${targetSocketId}`); // Can be noisy
+                socketRef.current.emit('webrtc_ice_candidate', {
+                    targetSocketId,
+                    candidate: event.candidate,
+                });
+            }
+        };
+
+        // Handle incoming remote stream
+        pc.ontrack = (event) => {
+            console.log(`Received remote track from ${targetSocketId}`);
+            if (event.streams && event.streams[0]) {
+                const stream = event.streams[0];
+                let audioEl = remoteAudioRefs.current[targetSocketId];
+                if (!audioEl) {
+                    console.log(`Creating audio element for ${targetSocketId}`);
+                    audioEl = new Audio();
+                    audioEl.autoplay = true;
+                     // audioEl.controls = true; // For debugging
+                    remoteAudioRefs.current[targetSocketId] = audioEl;
+                    // Optionally append to DOM for debugging: document.body.appendChild(audioEl);
+                }
+                 audioEl.srcObject = stream;
+                 // Apply deafen state immediately upon receiving track
+                 audioEl.muted = isDeafened;
+            } else {
+                 console.warn(`Received track event from ${targetSocketId} without streams.`);
+            }
+        };
+
+        // Handle connection state changes (optional: for debugging/UI updates)
+        pc.oniceconnectionstatechange = () => {
+            console.log(`ICE connection state for ${targetSocketId}: ${pc.iceConnectionState}`);
+             if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+                 console.warn(`Peer connection with ${targetSocketId} failed or closed.`);
+                // Clean up this peer connection?
+                // closePeerConnection(targetSocketId);
+            }
+        };
+
+        pc.onconnectionstatechange = () => {
+           console.log(`Connection state for ${targetSocketId}: ${pc.connectionState}`);
+            if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+               console.warn(`Peer connection state changed to ${pc.connectionState} for ${targetSocketId}`);
+                // Clean up this peer connection?
+                 closePeerConnection(targetSocketId);
+            }
+        };
+
+    }, [isDeafened]); // Add isDeafened dependency
+
+    const closePeerConnection = useCallback((targetSocketId: string) => {
+        const pc = peerConnections.current[targetSocketId];
+        if (pc) {
+            console.log(`Closing peer connection with ${targetSocketId}`);
+            pc.close();
+            delete peerConnections.current[targetSocketId];
+        }
+        const audioEl = remoteAudioRefs.current[targetSocketId];
+        if (audioEl) {
+            audioEl.srcObject = null;
+            audioEl.remove(); // Remove from DOM if appended
+            delete remoteAudioRefs.current[targetSocketId];
+        }
+    }, []);
+
+    // --- Socket.IO Connection and Data Handling ---
+    useEffect(() => {
+        // Conditions to establish connection:
+        // 1. Socket URL must be defined
+        // 2. Room details loaded
+        // 3. User authenticated
+        // 4. Current user details fetched
+        // 5. Local media stream obtained
+        // 6. Not already connecting or connected
+        if (configError || !roomDetails || !isAuthenticated || !currentUser || !localStreamRef.current) {
+            return;
+        }
+        if (socketRef.current || isConnecting) {
+            console.log("Socket connection attempt skipped: Already connected or connecting.");
+            return;
+        }
+
+        setIsConnecting(true);
+        setConnectionError(null);
+        console.log(`Attempting to connect socket for room ${roomId} at ${SOCKET_SERVER_URL}...`);
+
+        const socket = io(SOCKET_SERVER_URL!, {
+            transports: ['websocket'],
+            reconnectionAttempts: 3,
+            timeout: 10000,
+        });
+        socketRef.current = socket;
+
+        const handleConnect = () => {
+            console.log('Socket connected:', socket.id);
+            setIsConnecting(false);
+            setConnectionError(null);
+            toast({ title: 'Connected', description: `Joined voice room: ${roomDetails.name}` });
+
+            socket.emit('join_voice_room', {
+                roomId,
+                user: { username: currentUser.username, avatarUrl: currentUser.avatarUrl }
+            });
+        };
+
+        const handleDisconnect = (reason: string) => {
+            console.log('Socket disconnected:', reason);
+            setIsConnecting(false);
+            socketRef.current = null;
+            if (reason !== 'io client disconnect') {
+                setConnectionError(`Disconnected: ${reason}. Check server and network.`);
+                toast({ variant: 'destructive', title: 'Disconnected', description: 'Connection to the voice room lost.' });
+            }
+            setParticipants([]);
+            setChatMessages([]);
+            // Clean up all peer connections on socket disconnect
+            Object.keys(peerConnections.current).forEach(closePeerConnection);
+        };
+
+        const handleConnectError = (error: any) => {
+            console.error('Socket connection error:', error);
+            setIsConnecting(false);
+            socketRef.current = null;
+            let errorMessage = `Could not connect to the voice room server. Error: ${error.message || 'Unknown error'}`;
+            setConnectionError(errorMessage);
+            toast({ variant: 'destructive', title: 'Connection Error', description: errorMessage, duration: 10000 });
+        };
+
+        // --- Room State and WebRTC Signaling Listeners ---
+         const handleRoomState = async (data: { participants: Participant[], messages?: ChatMessage[], existingParticipantIds?: string[] }) => {
+            console.log('Received room state:', data);
+            setParticipants(data.participants || []);
+            setChatMessages(data.messages || []);
+            prevMessagesCountRef.current = data.messages?.length || 0;
+
+             // Initiate connections to existing participants
+             if (data.existingParticipantIds && localStreamRef.current) {
+                console.log('Initiating connections to existing participants:', data.existingParticipantIds);
+                for (const targetSocketId of data.existingParticipantIds) {
+                    if (targetSocketId !== socket.id) { // Don't connect to self
+                         try {
+                            createPeerConnection(targetSocketId);
+                            const pc = peerConnections.current[targetSocketId];
+                            if (!pc) continue;
+
+                            const offer = await pc.createOffer();
+                            await pc.setLocalDescription(offer);
+                            console.log(`Sending offer to ${targetSocketId}`);
+                             socketRef.current?.emit('webrtc_offer', { targetSocketId, offer });
+                         } catch (err) {
+                            console.error(`Error creating offer for ${targetSocketId}:`, err);
+                         }
+                    }
+                }
+             }
+        };
+
+        const handleParticipantJoined = (participant: Participant) => {
+             console.log('Participant joined:', participant);
+             setParticipants(prev => prev.find(p => p.id === participant.id) ? prev : [...prev, participant]);
+             if (participant.id !== socket.id) {
+                 if (participant.username !== currentUser.username) {
+                    toast({ description: `${participant.username} joined the room.` });
+                 }
+                 // Don't create connection here, wait for offer from the newcomer
+             }
+        };
+
+        const handleParticipantLeft = (targetSocketId: string) => {
+            console.log('Participant left:', targetSocketId);
+            let leftUsername = 'Someone';
+            setParticipants(prev => {
+                const user = prev.find(p => p.id === targetSocketId);
+                if(user) leftUsername = user.username;
+                return prev.filter(p => p.id !== targetSocketId);
+            });
+            if(leftUsername !== currentUser.username) {
+                toast({ description: `${leftUsername} left the room.` });
+            }
+            // Clean up peer connection for the left participant
+             closePeerConnection(targetSocketId);
+        };
+
+        const handleNewMessage = (message: ChatMessage) => {
+            setChatMessages(prev => [...prev, message]);
+        };
+
+        const handleParticipantUpdate = (update: Partial<Participant> & { id: string }) => {
+            setParticipants(prev => prev.map(p => p.id === update.id ? { ...p, ...update } : p));
+        };
+
+        // --- WebRTC Signaling Handlers ---
+        const handleWebRTCOffer = async ({ senderSocketId, offer }: { senderSocketId: string, offer: RTCSessionDescriptionInit }) => {
+            console.log(`Received offer from ${senderSocketId}`);
+            if (!localStreamRef.current) {
+                 console.error("Cannot handle offer: Local stream not ready.");
+                 return;
+            }
+             if (peerConnections.current[senderSocketId]) {
+                 console.warn(`Received offer from ${senderSocketId}, but connection already exists. Closing old one.`);
+                 closePeerConnection(senderSocketId);
+             }
+
+            createPeerConnection(senderSocketId);
+            const pc = peerConnections.current[senderSocketId];
+             if (!pc) {
+                 console.error(`Failed to create peer connection for offer from ${senderSocketId}`);
+                 return;
+             }
+
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                console.log(`Sending answer to ${senderSocketId}`);
+                socketRef.current?.emit('webrtc_answer', { targetSocketId: senderSocketId, answer });
+            } catch (err) {
+                 console.error(`Error handling offer from ${senderSocketId}:`, err);
+            }
+        };
+
+        const handleWebRTCAnswer = async ({ senderSocketId, answer }: { senderSocketId: string, answer: RTCSessionDescriptionInit }) => {
+            console.log(`Received answer from ${senderSocketId}`);
+            const pc = peerConnections.current[senderSocketId];
+            if (pc && pc.signalingState === 'have-local-offer') { // Ensure we are expecting an answer
+                 try {
+                     await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                     console.log(`Connection established with ${senderSocketId}`);
+                 } catch (err) {
+                      console.error(`Error handling answer from ${senderSocketId}:`, err);
+                 }
+            } else {
+                console.warn(`Received unexpected answer from ${senderSocketId} or connection not ready.`);
+            }
+        };
+
+        const handleWebRTCIceCandidate = async ({ senderSocketId, candidate }: { senderSocketId: string, candidate: RTCIceCandidateInit }) => {
+             // console.log(`Received ICE candidate from ${senderSocketId}`); // Can be noisy
+            const pc = peerConnections.current[senderSocketId];
+            if (pc && candidate) {
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                } catch (err) {
+                    console.error(`Error adding ICE candidate from ${senderSocketId}:`, err);
+                }
+            } else if (!pc) {
+                 console.warn(`Received ICE candidate from ${senderSocketId} but no peer connection found.`);
+            }
+        };
+
+
+        // --- Attach listeners ---
+        socket.on('connect', handleConnect);
+        socket.on('disconnect', handleDisconnect);
+        socket.on('connect_error', handleConnectError);
+        socket.on('room_state', handleRoomState);
+        socket.on('participant_joined', handleParticipantJoined);
+        socket.on('participant_left', handleParticipantLeft);
+        socket.on('new_message', handleNewMessage);
+        socket.on('participant_update', handleParticipantUpdate);
+        // WebRTC Listeners
+        socket.on('webrtc_offer', handleWebRTCOffer);
+        socket.on('webrtc_answer', handleWebRTCAnswer);
+        socket.on('webrtc_ice_candidate', handleWebRTCIceCandidate);
+
+
+        // --- Cleanup listeners and disconnect socket ---
+        return () => {
+          if (socketRef.current) {
+             console.log('Disconnecting voice room socket...');
+             // Remove all listeners
+             socketRef.current.off();
+             socketRef.current.disconnect();
+             socketRef.current = null;
+          }
+           setIsConnecting(false);
+           setParticipants([]);
+           setChatMessages([]);
+            // Clean up all peer connections
+            console.log("Cleaning up all peer connections.");
+            Object.keys(peerConnections.current).forEach(closePeerConnection);
+            peerConnections.current = {}; // Clear the ref object
+            remoteAudioRefs.current = {}; // Clear audio elements ref
+        };
+    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection]); // Added create/closePeerConnection
+
+
+    // --- Scroll chat to bottom ---
+    const scrollToBottom = useCallback(() => {
+        const scrollArea = chatScrollAreaRef.current;
+        if (scrollArea) {
+            const viewport = scrollArea.querySelector<HTMLDivElement>('div[data-radix-scroll-area-viewport]');
+            if (viewport) {
+                requestAnimationFrame(() => {
+                    viewport.scrollTop = viewport.scrollHeight;
+                });
+            }
+        }
+    }, []);
+
+    useEffect(() => {
+        if (chatMessages.length > prevMessagesCountRef.current) {
+            scrollToBottom();
+        }
+        prevMessagesCountRef.current = chatMessages.length;
+    }, [chatMessages, scrollToBottom]);
 
 
   // --- Event Handlers ---
@@ -335,22 +525,18 @@ export default function VoiceRoomPage() {
     if (!password || !roomDetails) return;
     setIsAuthLoading(true);
     setAuthError(null);
-
     try {
-        // Call the service function which calls the backend API
         const isCorrect = await verifyRoomPassword(roomDetails.id, password);
-
         if (isCorrect) {
-            setIsAuthenticated(true); // Grant access
+            setIsAuthenticated(true);
             toast({ title: "Success", description: "Access granted." });
         } else {
             setAuthError("Incorrect password. Please try again.");
-            setPassword(''); // Clear password field on error
+            setPassword('');
             toast({ title: "Access Denied", description: "Incorrect password.", variant: "destructive" });
         }
     } catch (error: any) {
          console.error("Password verification failed:", error);
-         // Check for config error first
          if (error.message?.includes("Backend API URL is not configured")) {
              setConfigError(error.message);
              toast({ title: "Configuration Error", description: error.message, variant: "destructive", duration: 15000 });
@@ -361,52 +547,72 @@ export default function VoiceRoomPage() {
     } finally {
          setIsAuthLoading(false);
     }
-
   }, [password, roomDetails, toast]);
 
   const handleSendMessage = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !socketRef.current || !socketRef.current.connected || !currentUser) return;
-
-    console.log("Sending message:", newMessage);
-     socketRef.current.emit('send_message', {
-         roomId,
-         message: newMessage,
-      });
-
+    if (!newMessage.trim() || !socketRef.current?.connected || !currentUser) return;
+    socketRef.current.emit('send_message', { roomId, message: newMessage });
     setNewMessage('');
   }, [newMessage, roomId, currentUser]);
 
   const handleLeaveRoom = useCallback(() => {
     console.log("Leaving room...");
-     if (socketRef.current) {
+    // Cleanup WebRTC connections
+    Object.keys(peerConnections.current).forEach(closePeerConnection);
+    peerConnections.current = {};
+    remoteAudioRefs.current = {};
+    // Cleanup local stream
+    localStreamRef.current?.getTracks().forEach(track => track.stop());
+    localStreamRef.current = null;
+    // Disconnect socket
+    if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
     }
     toast({ title: "Left Room", description: `You have left ${roomDetails?.name}.` });
     router.push('/voice-rooms');
-  }, [router, roomDetails?.name, toast]);
+  }, [router, roomDetails?.name, toast, closePeerConnection]);
 
-  const toggleMute = useCallback(() => {
-     const newMutedState = !isMuted;
-     setIsMuted(newMutedState);
-     if (socketRef.current?.connected) {
-        socketRef.current.emit('update_participant', { roomId, updates: { isMuted: newMutedState } });
-     }
-     // TODO: Actual WebRTC mute/unmute
-  }, [isMuted, roomId]);
+    // Toggle Microphone Mute State
+    const toggleMute = useCallback(() => {
+        const newMutedState = !isMuted;
+        setIsMuted(newMutedState);
 
-  const toggleDeafen = useCallback(() => {
-     const newDeafenedState = !isDeafened;
-     setIsDeafened(newDeafenedState);
-      if (newDeafenedState && !isMuted) {
-         setIsMuted(true); // Mute when deafening
-         if (socketRef.current?.connected) {
-             socketRef.current.emit('update_participant', { roomId, updates: { isMuted: true } });
-         }
-     }
-     // TODO: Actual WebRTC deafen/undeafen
-  }, [isDeafened, isMuted, roomId]);
+        // Toggle local audio track enabled state
+        localStreamRef.current?.getAudioTracks().forEach(track => {
+            track.enabled = !newMutedState;
+        });
+
+        // Notify others via socket
+        if (socketRef.current?.connected) {
+            socketRef.current.emit('update_participant', { roomId, updates: { isMuted: newMutedState } });
+        }
+    }, [isMuted, roomId]);
+
+
+    // Toggle Speaker Deafen State (mute all incoming audio)
+    const toggleDeafen = useCallback(() => {
+         const newDeafenedState = !isDeafened;
+         setIsDeafened(newDeafenedState);
+
+        // Mute/unmute all remote audio elements
+        Object.values(remoteAudioRefs.current).forEach(audioEl => {
+            audioEl.muted = newDeafenedState;
+        });
+
+        // Automatically mute microphone when deafening
+        if (newDeafenedState && !isMuted) {
+             setIsMuted(true);
+             localStreamRef.current?.getAudioTracks().forEach(track => {
+                track.enabled = false;
+            });
+            if (socketRef.current?.connected) {
+                socketRef.current.emit('update_participant', { roomId, updates: { isMuted: true } });
+            }
+        }
+        console.log("Deafen state changed:", newDeafenedState);
+    }, [isDeafened, isMuted, roomId]);
 
 
   // --- Render Logic ---
@@ -507,10 +713,16 @@ export default function VoiceRoomPage() {
                 <AlertDescription>{connectionError}</AlertDescription>
              </Alert>
            )}
+            {!localStreamRef.current && isAuthenticated && !connectionError && (
+                 <Alert variant="destructive" className="mt-2 p-2 text-xs">
+                    <MicOff className="h-3 w-3" />
+                    <AlertDescription>Mic access needed</AlertDescription>
+                 </Alert>
+            )}
         </div>
 
         {/* Participant List */}
-        <ScrollArea className="flex-grow p-4">
+        <ScrollArea className="flex-grow p-4" ref={chatScrollAreaRef}>
            {isConnecting && participants.length === 0 && (
                <div className="space-y-3">
                  {Array.from({length: 3}).map((_, i) => (
@@ -525,11 +737,12 @@ export default function VoiceRoomPage() {
             <ul className="space-y-3">
                 {participants.map((p) => (
                 <li key={p.id} className="flex items-center">
-                    <Avatar className={`h-10 w-10 mr-3 border-2 flex-shrink-0 ${p.isSpeaking ? 'border-primary animate-pulse' : 'border-transparent'}`}>
+                    <Avatar className={`h-10 w-10 mr-3 border-2 flex-shrink-0 ${p.isSpeaking ? 'border-green-500 animate-pulse' : 'border-transparent'}`}> {/* Changed speaking indicator */}
                     <AvatarImage src={p.avatarUrl} alt={p.username} data-ai-hint="person avatar"/>
                     <AvatarFallback>{p.username.charAt(0).toUpperCase()}</AvatarFallback>
                     </Avatar>
                     <span className="flex-grow truncate text-sm font-medium" title={p.username}>{p.username}</span>
+                     {/* Show mute icon if participant is muted */}
                     {p.isMuted && <MicOff className="h-4 w-4 text-muted-foreground ml-2 flex-shrink-0" title="Muted"/>}
                 </li>
                 ))}
@@ -559,7 +772,7 @@ export default function VoiceRoomPage() {
                 )}
              </div>
              <div className="flex items-center space-x-1 flex-shrink-0">
-                 <Button variant={isMuted ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'} disabled={isConnecting || !!connectionError}>
+                 <Button variant={isMuted ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'} disabled={isConnecting || !!connectionError || !localStreamRef.current}>
                     {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                  </Button>
                  <Button variant={isDeafened ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleDeafen} aria-label={isDeafened ? 'Undeafen' : 'Deafen'} disabled={isConnecting || !!connectionError}>
@@ -575,7 +788,7 @@ export default function VoiceRoomPage() {
       {/* Chat Area */}
       <main className="flex-grow flex flex-col bg-background min-w-0">
         {/* Connection Error Alert */}
-         {connectionError && (
+         {connectionError && !isConnecting && ( // Show only if not actively trying to connect
             <div className="p-4 flex-shrink-0">
                 <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
@@ -586,7 +799,7 @@ export default function VoiceRoomPage() {
          )}
 
         {/* Message List */}
-        <ScrollArea className="flex-grow p-4" ref={chatScrollAreaRef}>
+        <ScrollArea className="flex-grow p-4">
           <div className="space-y-4 mb-4">
             {isConnecting && chatMessages.length === 0 && (
                 <div className="flex justify-center items-center h-full text-muted-foreground">
@@ -619,11 +832,11 @@ export default function VoiceRoomPage() {
           <form className="flex items-center space-x-2" onSubmit={handleSendMessage}>
             <Input
               type="text"
-              placeholder={isDeafened ? "You are deafened" : (isConnecting || !!connectionError) ? "Connecting..." : "Type your message..."}
+              placeholder={isDeafened ? "You are deafened" : (isConnecting || !!connectionError || !localStreamRef.current) ? "Connecting..." : "Type your message..."}
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               className="flex-grow bg-background focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
-              disabled={isDeafened || isConnecting || !!connectionError || !socketRef.current?.connected}
+              disabled={isDeafened || isConnecting || !!connectionError || !localStreamRef.current || !socketRef.current?.connected}
               aria-label="Chat Message Input"
               autoComplete="off"
             />
@@ -631,7 +844,7 @@ export default function VoiceRoomPage() {
                type="submit"
                size="icon"
                className="bg-primary text-primary-foreground hover:bg-primary/90 flex-shrink-0"
-               disabled={!newMessage.trim() || isDeafened || isConnecting || !!connectionError || !socketRef.current?.connected}
+               disabled={!newMessage.trim() || isDeafened || isConnecting || !!connectionError || !localStreamRef.current || !socketRef.current?.connected}
                aria-label="Send Message"
             >
               <Send className="h-4 w-4" />
@@ -639,6 +852,8 @@ export default function VoiceRoomPage() {
           </form>
         </div>
       </main>
+       {/* Container for remote audio elements (hidden) */}
+       <div id="remote-audio-container" style={{ display: 'none' }}></div>
     </div>
   );
 }
