@@ -201,7 +201,7 @@ io.on("connection", (socket) => {
        ...rooms[roomId].participants[socket.id]
     });
 
-     // Broadcast updated participant count
+     // Broadcast updated participant count *after* adding the participant
     broadcastParticipantCount(roomId);
 
   });
@@ -347,8 +347,9 @@ function handleLeave(roomId, socket, isDisconnect = false) {
    if (Object.keys(rooms[roomId].participants).length === 0) {
         // **Important:** If using a persistent DB, you might not delete the room here.
         // For in-memory, we delete it.
-        delete rooms[roomId];
-        console.log(`Room ${roomId} is now empty and removed.`);
+        console.log(`Room ${roomId} is now empty but keeping it available.`);
+        // delete rooms[roomId]; // Keep the room available even if empty
+        // console.log(`Room ${roomId} is now empty and removed.`);
         // TODO: Potentially notify listing clients that room was removed
         // io.emit('room_removed', roomId); // Example
    }
@@ -358,10 +359,10 @@ function handleLeave(roomId, socket, isDisconnect = false) {
 function broadcastParticipantCount(roomId) {
     if (rooms[roomId]) {
         const count = Object.keys(rooms[roomId].participants).length;
-        // Option 1: Emit a specific event for count updates
+        // Emit a specific event for count updates *to the room*
         io.to(roomId).emit('participant_count_update', { roomId, count });
         console.log(`Broadcasted participant count for room ${roomId}: ${count}`);
-        // Option 2: Could also update the general room listing if needed (more complex)
+        // TODO: Update the general room listing API data if needed (more complex, involves updating API state)
     }
 }
 
@@ -377,3 +378,4 @@ const port = process.env.PORT || 3001; // Fallback for local dev
 server.listen(port, () => {
   console.log(`Server listening on *:${port} (HTTP API & WebSockets)`);
 });
+

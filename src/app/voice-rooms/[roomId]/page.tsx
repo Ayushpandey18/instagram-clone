@@ -7,16 +7,16 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"; // Added CardDescription
-import { PhoneOff, Send, Mic, MicOff, Volume2, VolumeX, Lock, Loader2, ArrowLeft, Settings, AlertCircle, User, Users } from 'lucide-react'; // Added User, Users, AlertCircle
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { PhoneOff, Send, Mic, MicOff, Volume2, VolumeX, Lock, Loader2, ArrowLeft, Settings, AlertCircle, User, Users } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
-import type { VoiceRoom } from '@/services/voice-room'; // Import type only
+import type { VoiceRoom } from '@/services/voice-room';
 import { getVoiceRoom, verifyRoomPassword } from '@/services/voice-room';
 import { Skeleton } from '@/components/ui/skeleton';
-import io, { Socket } from 'socket.io-client'; // Import socket.io-client and Socket type
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; // Import Alert components
-import { getCurrentUser } from '@/services/user'; // Import function to get current user details
-import type { UserProfile } from '@/services/user'; // Import UserProfile type
+import io, { Socket } from 'socket.io-client';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { getCurrentUser } from '@/services/user';
+import type { UserProfile } from '@/services/user';
 
 interface Participant {
   id: string; // Socket ID
@@ -29,7 +29,7 @@ interface Participant {
 interface ChatMessage {
   id: string;
   username: string;
-  userAvatar: string; // Added user avatar
+  userAvatar: string;
   message: string;
   timestamp: string;
 }
@@ -38,12 +38,10 @@ interface ChatMessage {
 const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
 // --- WebRTC Configuration ---
-// Use public STUN servers (Google's are commonly used)
 const iceServers = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        // Add TURN servers here if needed for NAT traversal issues
     ],
 };
 
@@ -65,22 +63,24 @@ export default function VoiceRoomPage() {
   const [configError, setConfigError] = useState<string | null>(null);
 
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [participantCount, setParticipantCount] = useState(0); // State for count
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isMuted, setIsMuted] = useState(false);
-  const [isDeafened, setIsDeafened] = useState(false); // Tracks local deafen state
+  const [isDeafened, setIsDeafened] = useState(false);
 
-  const chatScrollAreaRef = useRef<HTMLDivElement>(null);
+  const chatScrollAreaViewportRef = useRef<HTMLDivElement>(null); // Ref for the viewport div
   const socketRef = useRef<Socket | null>(null);
-  const peerConnections = useRef<Record<string, RTCPeerConnection>>({}); // Store peer connections { targetSocketId: RTCPeerConnection }
-  const localStreamRef = useRef<MediaStream | null>(null); // Store local audio stream
-  const remoteAudioRefs = useRef<Record<string, HTMLAudioElement>>({}); // Store remote audio elements { targetSocketId: HTMLAudioElement }
+  const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
   const prevMessagesCountRef = useRef(0);
 
    // --- Check Environment Variable ---
    useEffect(() => {
     if (!SOCKET_SERVER_URL) {
-        const errorMsg = "Configuration error: Socket server URL is missing. Cannot connect to voice room.";
+        const errorMsg = "FATAL ERROR: NEXT_PUBLIC_SOCKET_URL environment variable is not set!";
+        console.error(errorMsg); // Log critical error
         setConfigError(errorMsg);
         toast({
             variant: 'destructive',
@@ -88,9 +88,10 @@ export default function VoiceRoomPage() {
             description: 'The voice room server URL is not configured. Please contact support.',
             duration: 15000,
         });
-        setIsLoading(false); // Stop loading if URL is missing
+        setIsLoading(false);
     } else {
-        setConfigError(null); // Clear config error if URL is present
+        console.log("Using Socket URL:", SOCKET_SERVER_URL); // Log the URL being used
+        setConfigError(null);
     }
   }, [toast]);
 
@@ -104,18 +105,18 @@ export default function VoiceRoomPage() {
                     setCurrentUser(user);
                } else {
                    toast({ title: "Authentication Error", description: "Could not load user details. Please log in.", variant: "destructive" });
-                   router.push('/'); // Example redirect
+                   router.push('/');
                }
            } catch (err) {
                console.error("Failed to fetch current user:", err);
                toast({ title: "Error", description: "Could not load your user details.", variant: "destructive" });
-               router.push('/'); // Example redirect
+               router.push('/');
            }
        };
        if (!configError) {
            fetchUser();
        }
-   }, [toast, router, configError]); // Add configError dependency
+   }, [toast, router, configError]);
 
 
   // --- Fetch Room Details ---
@@ -124,9 +125,9 @@ export default function VoiceRoomPage() {
 
     const fetchRoomDetails = async () => {
       setIsLoading(true);
-      setConnectionError(null); // Clear connection error on fetch
+      setConnectionError(null);
       try {
-        const details = await getVoiceRoom(roomId); // Uses API now
+        const details = await getVoiceRoom(roomId);
         if (details) {
           setRoomDetails(details);
           if (!details.passwordProtected) {
@@ -134,39 +135,35 @@ export default function VoiceRoomPage() {
           }
         } else {
           toast({ title: "Error", description: "Voice room not found.", variant: "destructive" });
-          router.push('/voice-rooms'); // Redirect if room doesn't exist
+          router.push('/voice-rooms');
         }
-      } catch (error: any) { // Catch specific error type
+      } catch (error: any) {
         console.error("Failed to fetch room details:", error);
         if (error.message?.includes("Backend API URL is not configured")) {
-             setConfigError(error.message); // Ensure config error state is set
+             setConfigError(error.message);
              toast({ title: "Configuration Error", description: error.message, variant: "destructive", duration: 15000 });
         } else {
             toast({ title: "Error Loading Room", description: error.message || "Failed to load room details.", variant: "destructive" });
-            router.push('/voice-rooms'); // Redirect on other errors
+            router.push('/voice-rooms');
         }
       } finally {
-        setIsLoading(false); // Finish loading room details
+        setIsLoading(false);
       }
     };
     fetchRoomDetails();
-   }, [roomId, router, toast, currentUser, configError]); // Added configError dependency
+   }, [roomId, router, toast, currentUser, configError]);
 
 
     // --- Initialize Local Media Stream ---
     useEffect(() => {
-        // Only get media stream if authenticated and not already obtained
         if (!isAuthenticated || localStreamRef.current || configError || !currentUser) return;
 
         navigator.mediaDevices.getUserMedia({ audio: true, video: false })
             .then(stream => {
                 console.log("Local audio stream obtained.");
                 localStreamRef.current = stream;
-                // Mute initially based on state
-                stream.getAudioTracks().forEach(track => track.enabled = !isMuted);
-                // After getting stream, proceed to socket connection (if not already connecting)
+                stream.getAudioTracks().forEach(track => track.enabled = !isMuted); // Default state allows talking
                 if (!socketRef.current && !isConnecting) {
-                    // Trigger socket connection logic here or let the main useEffect handle it
                     console.log("Local stream ready, proceeding to connect socket.");
                 }
             })
@@ -179,16 +176,14 @@ export default function VoiceRoomPage() {
                     duration: 10000
                 });
                 setConnectionError("Microphone access denied or unavailable.");
-                // Prevent further connection attempts if mic fails?
             });
 
-        // Cleanup: Stop tracks when component unmounts or user leaves
         return () => {
             console.log("Stopping local media tracks.");
             localStreamRef.current?.getTracks().forEach(track => track.stop());
             localStreamRef.current = null;
         };
-    }, [isAuthenticated, isMuted, toast, configError, currentUser, isConnecting]); // Added currentUser and isConnecting
+    }, [isAuthenticated, isMuted, toast, configError, currentUser, isConnecting]);
 
 
     // --- WebRTC Peer Connection Management ---
@@ -202,15 +197,12 @@ export default function VoiceRoomPage() {
         const pc = new RTCPeerConnection(iceServers);
         peerConnections.current[targetSocketId] = pc;
 
-        // Add local stream tracks to the connection
         localStreamRef.current.getTracks().forEach(track => {
             pc.addTrack(track, localStreamRef.current!);
         });
 
-        // Handle ICE candidates: Send them to the peer via signaling server
         pc.onicecandidate = (event) => {
             if (event.candidate && socketRef.current?.connected) {
-                 // console.log(`Sending ICE candidate to ${targetSocketId}`); // Can be noisy
                 socketRef.current.emit('webrtc_ice_candidate', {
                     targetSocketId,
                     candidate: event.candidate,
@@ -218,7 +210,6 @@ export default function VoiceRoomPage() {
             }
         };
 
-        // Handle incoming remote stream
         pc.ontrack = (event) => {
             console.log(`Received remote track from ${targetSocketId}`);
             if (event.streams && event.streams[0]) {
@@ -228,25 +219,29 @@ export default function VoiceRoomPage() {
                     console.log(`Creating audio element for ${targetSocketId}`);
                     audioEl = new Audio();
                     audioEl.autoplay = true;
-                     // audioEl.controls = true; // For debugging
                     remoteAudioRefs.current[targetSocketId] = audioEl;
-                    // Optionally append to DOM for debugging: document.body.appendChild(audioEl);
+                    // Find or create a hidden container for audio elements
+                    let container = document.getElementById('remote-audio-container');
+                    if (!container) {
+                        container = document.createElement('div');
+                        container.id = 'remote-audio-container';
+                        container.style.display = 'none';
+                        document.body.appendChild(container);
+                    }
+                    container.appendChild(audioEl);
                 }
                  audioEl.srcObject = stream;
-                 // Apply deafen state immediately upon receiving track
                  audioEl.muted = isDeafened;
             } else {
                  console.warn(`Received track event from ${targetSocketId} without streams.`);
             }
         };
 
-        // Handle connection state changes (optional: for debugging/UI updates)
         pc.oniceconnectionstatechange = () => {
-            console.log(`ICE connection state for ${targetSocketId}: ${pc.iceConnectionState}`);
+            // console.log(`ICE connection state for ${targetSocketId}: ${pc.iceConnectionState}`);
              if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
                  console.warn(`Peer connection with ${targetSocketId} failed or closed.`);
-                // Clean up this peer connection?
-                // closePeerConnection(targetSocketId);
+                 closePeerConnection(targetSocketId); // Clean up on failure/closure
             }
         };
 
@@ -254,42 +249,37 @@ export default function VoiceRoomPage() {
            console.log(`Connection state for ${targetSocketId}: ${pc.connectionState}`);
             if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
                console.warn(`Peer connection state changed to ${pc.connectionState} for ${targetSocketId}`);
-                // Clean up this peer connection?
                  closePeerConnection(targetSocketId);
             }
         };
 
-    }, [isDeafened]); // Add isDeafened dependency
+    }, [isDeafened]); // Added isDeafened dependency
 
     const closePeerConnection = useCallback((targetSocketId: string) => {
         const pc = peerConnections.current[targetSocketId];
         if (pc) {
             console.log(`Closing peer connection with ${targetSocketId}`);
+            pc.ontrack = null;
+            pc.onicecandidate = null;
+            pc.oniceconnectionstatechange = null;
+            pc.onconnectionstatechange = null;
             pc.close();
             delete peerConnections.current[targetSocketId];
         }
         const audioEl = remoteAudioRefs.current[targetSocketId];
         if (audioEl) {
             audioEl.srcObject = null;
-            audioEl.remove(); // Remove from DOM if appended
+            audioEl.remove();
             delete remoteAudioRefs.current[targetSocketId];
         }
     }, []);
 
     // --- Socket.IO Connection and Data Handling ---
     useEffect(() => {
-        // Conditions to establish connection:
-        // 1. Socket URL must be defined
-        // 2. Room details loaded
-        // 3. User authenticated
-        // 4. Current user details fetched
-        // 5. Local media stream obtained
-        // 6. Not already connecting or connected
         if (configError || !roomDetails || !isAuthenticated || !currentUser || !localStreamRef.current) {
             return;
         }
         if (socketRef.current || isConnecting) {
-            console.log("Socket connection attempt skipped: Already connected or connecting.");
             return;
         }
 
@@ -298,7 +288,7 @@ export default function VoiceRoomPage() {
         console.log(`Attempting to connect socket for room ${roomId} at ${SOCKET_SERVER_URL}...`);
 
         const socket = io(SOCKET_SERVER_URL!, {
-            transports: ['websocket'],
+            transports: ['websocket'], // Explicitly use WebSockets
             reconnectionAttempts: 3,
             timeout: 10000,
         });
@@ -325,8 +315,8 @@ export default function VoiceRoomPage() {
                 toast({ variant: 'destructive', title: 'Disconnected', description: 'Connection to the voice room lost.' });
             }
             setParticipants([]);
+            setParticipantCount(0); // Reset count on disconnect
             setChatMessages([]);
-            // Clean up all peer connections on socket disconnect
             Object.keys(peerConnections.current).forEach(closePeerConnection);
         };
 
@@ -339,18 +329,18 @@ export default function VoiceRoomPage() {
             toast({ variant: 'destructive', title: 'Connection Error', description: errorMessage, duration: 10000 });
         };
 
-        // --- Room State and WebRTC Signaling Listeners ---
          const handleRoomState = async (data: { participants: Participant[], messages?: ChatMessage[], existingParticipantIds?: string[] }) => {
             console.log('Received room state:', data);
-            setParticipants(data.participants || []);
+            const currentParticipants = data.participants || [];
+            setParticipants(currentParticipants);
+            setParticipantCount(currentParticipants.length); // Set initial count from full state
             setChatMessages(data.messages || []);
             prevMessagesCountRef.current = data.messages?.length || 0;
 
-             // Initiate connections to existing participants
              if (data.existingParticipantIds && localStreamRef.current) {
                 console.log('Initiating connections to existing participants:', data.existingParticipantIds);
                 for (const targetSocketId of data.existingParticipantIds) {
-                    if (targetSocketId !== socket.id) { // Don't connect to self
+                    if (targetSocketId !== socket.id) {
                          try {
                             createPeerConnection(targetSocketId);
                             const pc = peerConnections.current[targetSocketId];
@@ -371,11 +361,11 @@ export default function VoiceRoomPage() {
         const handleParticipantJoined = (participant: Participant) => {
              console.log('Participant joined:', participant);
              setParticipants(prev => prev.find(p => p.id === participant.id) ? prev : [...prev, participant]);
+             // Count will be updated via 'participant_count_update'
              if (participant.id !== socket.id) {
                  if (participant.username !== currentUser.username) {
                     toast({ description: `${participant.username} joined the room.` });
                  }
-                 // Don't create connection here, wait for offer from the newcomer
              }
         };
 
@@ -387,10 +377,10 @@ export default function VoiceRoomPage() {
                 if(user) leftUsername = user.username;
                 return prev.filter(p => p.id !== targetSocketId);
             });
+             // Count will be updated via 'participant_count_update'
             if(leftUsername !== currentUser.username) {
                 toast({ description: `${leftUsername} left the room.` });
             }
-            // Clean up peer connection for the left participant
              closePeerConnection(targetSocketId);
         };
 
@@ -400,6 +390,12 @@ export default function VoiceRoomPage() {
 
         const handleParticipantUpdate = (update: Partial<Participant> & { id: string }) => {
             setParticipants(prev => prev.map(p => p.id === update.id ? { ...p, ...update } : p));
+        };
+
+        // --- Handle Participant Count Updates ---
+        const handleParticipantCountUpdate = ({ count }: { count: number }) => {
+             console.log(`Received participant count update: ${count}`);
+             setParticipantCount(count);
         };
 
         // --- WebRTC Signaling Handlers ---
@@ -435,7 +431,7 @@ export default function VoiceRoomPage() {
         const handleWebRTCAnswer = async ({ senderSocketId, answer }: { senderSocketId: string, answer: RTCSessionDescriptionInit }) => {
             console.log(`Received answer from ${senderSocketId}`);
             const pc = peerConnections.current[senderSocketId];
-            if (pc && pc.signalingState === 'have-local-offer') { // Ensure we are expecting an answer
+            if (pc && pc.signalingState === 'have-local-offer') {
                  try {
                      await pc.setRemoteDescription(new RTCSessionDescription(answer));
                      console.log(`Connection established with ${senderSocketId}`);
@@ -448,7 +444,6 @@ export default function VoiceRoomPage() {
         };
 
         const handleWebRTCIceCandidate = async ({ senderSocketId, candidate }: { senderSocketId: string, candidate: RTCIceCandidateInit }) => {
-             // console.log(`Received ICE candidate from ${senderSocketId}`); // Can be noisy
             const pc = peerConnections.current[senderSocketId];
             if (pc && candidate) {
                 try {
@@ -457,7 +452,7 @@ export default function VoiceRoomPage() {
                     console.error(`Error adding ICE candidate from ${senderSocketId}:`, err);
                 }
             } else if (!pc) {
-                 console.warn(`Received ICE candidate from ${senderSocketId} but no peer connection found.`);
+                 // console.warn(`Received ICE candidate from ${senderSocketId} but no peer connection found.`);
             }
         };
 
@@ -471,6 +466,7 @@ export default function VoiceRoomPage() {
         socket.on('participant_left', handleParticipantLeft);
         socket.on('new_message', handleNewMessage);
         socket.on('participant_update', handleParticipantUpdate);
+        socket.on('participant_count_update', handleParticipantCountUpdate); // Listen for count updates
         // WebRTC Listeners
         socket.on('webrtc_offer', handleWebRTCOffer);
         socket.on('webrtc_answer', handleWebRTCAnswer);
@@ -481,7 +477,6 @@ export default function VoiceRoomPage() {
         return () => {
           if (socketRef.current) {
              console.log('Disconnecting voice room socket...');
-             // Remove all listeners
              socketRef.current.off();
              socketRef.current.disconnect();
              socketRef.current = null;
@@ -489,25 +484,21 @@ export default function VoiceRoomPage() {
            setIsConnecting(false);
            setParticipants([]);
            setChatMessages([]);
-            // Clean up all peer connections
             console.log("Cleaning up all peer connections.");
             Object.keys(peerConnections.current).forEach(closePeerConnection);
-            peerConnections.current = {}; // Clear the ref object
-            remoteAudioRefs.current = {}; // Clear audio elements ref
+            peerConnections.current = {};
+            remoteAudioRefs.current = {};
         };
-    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection]); // Added create/closePeerConnection
+    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection]);
 
 
     // --- Scroll chat to bottom ---
     const scrollToBottom = useCallback(() => {
-        const scrollArea = chatScrollAreaRef.current;
-        if (scrollArea) {
-            const viewport = scrollArea.querySelector<HTMLDivElement>('div[data-radix-scroll-area-viewport]');
-            if (viewport) {
-                requestAnimationFrame(() => {
-                    viewport.scrollTop = viewport.scrollHeight;
-                });
-            }
+        const viewport = chatScrollAreaViewportRef.current;
+        if (viewport) {
+            requestAnimationFrame(() => {
+                viewport.scrollTop = viewport.scrollHeight;
+            });
         }
     }, []);
 
@@ -558,14 +549,11 @@ export default function VoiceRoomPage() {
 
   const handleLeaveRoom = useCallback(() => {
     console.log("Leaving room...");
-    // Cleanup WebRTC connections
     Object.keys(peerConnections.current).forEach(closePeerConnection);
     peerConnections.current = {};
     remoteAudioRefs.current = {};
-    // Cleanup local stream
     localStreamRef.current?.getTracks().forEach(track => track.stop());
     localStreamRef.current = null;
-    // Disconnect socket
     if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
@@ -574,34 +562,28 @@ export default function VoiceRoomPage() {
     router.push('/voice-rooms');
   }, [router, roomDetails?.name, toast, closePeerConnection]);
 
-    // Toggle Microphone Mute State
     const toggleMute = useCallback(() => {
         const newMutedState = !isMuted;
         setIsMuted(newMutedState);
 
-        // Toggle local audio track enabled state
         localStreamRef.current?.getAudioTracks().forEach(track => {
             track.enabled = !newMutedState;
         });
 
-        // Notify others via socket
         if (socketRef.current?.connected) {
             socketRef.current.emit('update_participant', { roomId, updates: { isMuted: newMutedState } });
         }
     }, [isMuted, roomId]);
 
 
-    // Toggle Speaker Deafen State (mute all incoming audio)
     const toggleDeafen = useCallback(() => {
          const newDeafenedState = !isDeafened;
          setIsDeafened(newDeafenedState);
 
-        // Mute/unmute all remote audio elements
         Object.values(remoteAudioRefs.current).forEach(audioEl => {
             audioEl.muted = newDeafenedState;
         });
 
-        // Automatically mute microphone when deafening
         if (newDeafenedState && !isMuted) {
              setIsMuted(true);
              localStreamRef.current?.getAudioTracks().forEach(track => {
@@ -617,7 +599,6 @@ export default function VoiceRoomPage() {
 
   // --- Render Logic ---
 
-   // Display Configuration Error prominently if it exists
    if (configError) {
      return (
          <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center text-center h-screen justify-center">
@@ -632,7 +613,6 @@ export default function VoiceRoomPage() {
      );
    }
 
-  // Loading state for initial room details or user details
   if (isLoading || !currentUser) {
     return (
       <div className="container mx-auto max-w-6xl py-8 px-4 flex justify-center items-center h-screen">
@@ -641,7 +621,6 @@ export default function VoiceRoomPage() {
     );
   }
 
-   // Room loading error (but not config error)
    if (!roomDetails) {
      return (
          <div className="container mx-auto p-8 text-center h-screen flex flex-col justify-center items-center">
@@ -655,7 +634,6 @@ export default function VoiceRoomPage() {
      );
    }
 
-  // --- Password Prompt ---
   if (roomDetails.passwordProtected && !isAuthenticated) {
     return (
         <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center h-screen justify-center">
@@ -700,7 +678,7 @@ export default function VoiceRoomPage() {
         <div className="p-4 border-b border-border">
           <h2 className="text-lg font-semibold truncate" title={roomDetails.name}>{roomDetails.name}</h2>
           <div className="flex items-center text-sm text-muted-foreground mt-1">
-             <Users className="h-4 w-4 mr-1.5"/> Participants ({participants.length})
+             <Users className="h-4 w-4 mr-1.5"/> Participants ({participantCount}) {/* Use state for count */}
           </div>
            {isConnecting && (
              <div className="flex items-center text-xs text-muted-foreground mt-1">
@@ -722,7 +700,7 @@ export default function VoiceRoomPage() {
         </div>
 
         {/* Participant List */}
-        <ScrollArea className="flex-grow p-4" ref={chatScrollAreaRef}>
+        <ScrollArea className="flex-grow p-4">
            {isConnecting && participants.length === 0 && (
                <div className="space-y-3">
                  {Array.from({length: 3}).map((_, i) => (
@@ -737,12 +715,11 @@ export default function VoiceRoomPage() {
             <ul className="space-y-3">
                 {participants.map((p) => (
                 <li key={p.id} className="flex items-center">
-                    <Avatar className={`h-10 w-10 mr-3 border-2 flex-shrink-0 ${p.isSpeaking ? 'border-green-500 animate-pulse' : 'border-transparent'}`}> {/* Changed speaking indicator */}
+                    <Avatar className={`h-10 w-10 mr-3 border-2 flex-shrink-0 ${p.isSpeaking ? 'border-green-500 animate-pulse' : 'border-transparent'}`}>
                     <AvatarImage src={p.avatarUrl} alt={p.username} data-ai-hint="person avatar"/>
                     <AvatarFallback>{p.username.charAt(0).toUpperCase()}</AvatarFallback>
                     </Avatar>
                     <span className="flex-grow truncate text-sm font-medium" title={p.username}>{p.username}</span>
-                     {/* Show mute icon if participant is muted */}
                     {p.isMuted && <MicOff className="h-4 w-4 text-muted-foreground ml-2 flex-shrink-0" title="Muted"/>}
                 </li>
                 ))}
@@ -788,7 +765,7 @@ export default function VoiceRoomPage() {
       {/* Chat Area */}
       <main className="flex-grow flex flex-col bg-background min-w-0">
         {/* Connection Error Alert */}
-         {connectionError && !isConnecting && ( // Show only if not actively trying to connect
+         {connectionError && !isConnecting && (
             <div className="p-4 flex-shrink-0">
                 <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
@@ -799,8 +776,8 @@ export default function VoiceRoomPage() {
          )}
 
         {/* Message List */}
-        <ScrollArea className="flex-grow p-4">
-          <div className="space-y-4 mb-4">
+        <ScrollArea className="flex-grow" viewportRef={chatScrollAreaViewportRef}>
+          <div className="space-y-4 p-4 mb-4"> {/* Added padding */}
             {isConnecting && chatMessages.length === 0 && (
                 <div className="flex justify-center items-center h-full text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading chat...
@@ -832,11 +809,12 @@ export default function VoiceRoomPage() {
           <form className="flex items-center space-x-2" onSubmit={handleSendMessage}>
             <Input
               type="text"
-              placeholder={isDeafened ? "You are deafened" : (isConnecting || !!connectionError || !localStreamRef.current) ? "Connecting..." : "Type your message..."}
+              placeholder={isConnecting ? "Connecting..." : (!!connectionError || !socketRef.current?.connected ? "Connection error..." : (isDeafened ? "You are deafened" : "Type your message..."))}
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               className="flex-grow bg-background focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
-              disabled={isDeafened || isConnecting || !!connectionError || !localStreamRef.current || !socketRef.current?.connected}
+              // Disable only if actively connecting, error exists, socket not connected, or deafened
+              disabled={isConnecting || !!connectionError || !socketRef.current?.connected || isDeafened}
               aria-label="Chat Message Input"
               autoComplete="off"
             />
@@ -844,7 +822,7 @@ export default function VoiceRoomPage() {
                type="submit"
                size="icon"
                className="bg-primary text-primary-foreground hover:bg-primary/90 flex-shrink-0"
-               disabled={!newMessage.trim() || isDeafened || isConnecting || !!connectionError || !localStreamRef.current || !socketRef.current?.connected}
+               disabled={!newMessage.trim() || isConnecting || !!connectionError || !socketRef.current?.connected || isDeafened}
                aria-label="Send Message"
             >
               <Send className="h-4 w-4" />
@@ -857,3 +835,4 @@ export default function VoiceRoomPage() {
     </div>
   );
 }
+
