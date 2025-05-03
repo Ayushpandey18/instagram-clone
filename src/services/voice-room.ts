@@ -48,7 +48,7 @@ export async function createVoiceRoom(name: string, password?: string): Promise<
     }
     console.log(`[Service] Creating room via API: ${name}, Password protected: ${!!password}`);
 
-    const response = await fetch(`${API_BASE_URL}/api/rooms`, {
+    const response = await fetch(`${API_BASE_URL}api/rooms`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -121,7 +121,7 @@ export async function getAllVoiceRooms(): Promise<VoiceRoom[]> {
     }
    console.log(`[Service] Fetching all voice rooms from API: ${API_BASE_URL}/api/rooms`);
    try {
-        const response = await fetch(`${API_BASE_URL}/api/rooms`);
+        const response = await fetch(`${API_BASE_URL}api/rooms`);
         if (!response.ok) {
             // Try to get a more specific error message from the response body
             let errorMessage = `Failed to fetch rooms: ${response.status} ${response.statusText}`;
@@ -159,7 +159,7 @@ export async function verifyRoomPassword(roomId: string, passwordAttempt: string
      console.log(`[Service] Verifying password via API for room ${roomId}`);
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/verify`, {
+        const response = await fetch(`${API_BASE_URL}api/rooms/${roomId}/verify`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

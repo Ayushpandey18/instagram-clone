@@ -12,7 +12,7 @@ const server = http.createServer(app);
 
 // Get allowed origins from environment variable, split by comma, or default
 // Use NEXT_PUBLIC_APP_URL for the frontend URL and ensure localhost is included
-const defaultOrigins = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9005'},http://localhost:9005`;
+const defaultOrigins = "http://localhost:9005,https://instagram-clone-ug7f.vercel.app"; // Add your Vercel URL here and localhost
 const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins).split(',').map(origin => origin.trim());
 console.log("Allowed CORS Origins:", allowedOrigins);
 
