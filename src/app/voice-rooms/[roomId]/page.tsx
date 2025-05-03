@@ -63,6 +63,7 @@ export default function VoiceRoomPage() {
 
   const chatScrollAreaRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null); // Ref to store socket instance, typed
+  const prevMessagesCountRef = useRef(0); // Ref to track previous message count for scrolling logic
 
    // --- Check Environment Variable ---
   useEffect(() => {
@@ -210,7 +211,8 @@ export default function VoiceRoomPage() {
         console.log('Received initial room state:', data);
         setParticipants(data.participants || []);
         setChatMessages(data.messages || []); // Initialize with existing messages
-        scrollToBottom();
+        prevMessagesCountRef.current = data.messages?.length || 0; // Initialize prev count
+        // Scrolling is handled by useEffect watching chatMessages
     };
 
     const handleParticipantJoined = (participant: Participant) => {
@@ -296,10 +298,14 @@ export default function VoiceRoomPage() {
       }
   };
 
-  // Update scroll on new messages
+  // Update scroll only when the number of messages increases
   useEffect(() => {
-      scrollToBottom();
-  }, [chatMessages]); // Trigger scroll whenever messages change
+      if (chatMessages.length > prevMessagesCountRef.current) {
+          scrollToBottom();
+      }
+      // Update the ref *after* potential scroll
+      prevMessagesCountRef.current = chatMessages.length;
+  }, [chatMessages]); // Trigger scroll only when messages change
 
 
   // --- Event Handlers ---
