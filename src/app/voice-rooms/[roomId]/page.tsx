@@ -156,7 +156,10 @@ export default function VoiceRoomPage() {
 
     // --- Initialize Local Media Stream ---
     useEffect(() => {
-        if (!isAuthenticated || localStreamRef.current || configError || !currentUser) return;
+        // Attempt to get stream only if authenticated, no config error, and user details loaded
+        if (!isAuthenticated || configError || !currentUser) return;
+        // Prevent re-requesting if stream already exists or if socket is connecting/connected
+        if (localStreamRef.current || isConnecting || socketRef.current?.connected) return;
 
         navigator.mediaDevices.getUserMedia({ audio: true, video: false })
             .then(stream => {
@@ -170,36 +173,54 @@ export default function VoiceRoomPage() {
             .catch(err => {
                 console.error("Error getting user media:", err);
                 toast({
-                    variant: 'destructive',
+                    variant: 'warning', // Change to warning as it's not blocking joining anymore
                     title: 'Microphone Access Error',
-                    description: 'Could not access microphone. Please check permissions and refresh.',
-                    duration: 10000
+                    description: 'Could not access microphone. You will not be able to speak.',
+                    duration: 7000
                 });
-                setConnectionError("Microphone access denied or unavailable.");
+                // No longer setting connectionError here, allowing connection attempt anyway
             });
 
+        // Cleanup stream on unmount or if authentication changes
         return () => {
-            console.log("Stopping local media tracks.");
-            localStreamRef.current?.getTracks().forEach(track => track.stop());
-            localStreamRef.current = null;
+            if (localStreamRef.current) {
+                 console.log("Stopping local media tracks.");
+                 localStreamRef.current.getTracks().forEach(track => track.stop());
+                 localStreamRef.current = null;
+            }
         };
     }, [isAuthenticated, isMuted, toast, configError, currentUser, isConnecting]);
 
 
     // --- WebRTC Peer Connection Management ---
     const createPeerConnection = useCallback((targetSocketId: string) => {
-        if (peerConnections.current[targetSocketId] || !socketRef.current || !localStreamRef.current) {
-             console.warn(`Peer connection already exists or socket/stream not ready for ${targetSocketId}`);
+        if (peerConnections.current[targetSocketId] || !socketRef.current?.connected) {
+             console.warn(`Peer connection already exists or socket not ready for ${targetSocketId}`);
              return;
         }
+        // Check if local stream exists before adding tracks
+        if (!localStreamRef.current) {
+            console.warn(`Cannot create peer connection to ${targetSocketId}: Local audio stream not available.`);
+            // Optionally, still create the connection but without sending tracks, only receiving
+            // Or, simply return and don't establish the outbound part of the connection
+            // return; // Decide if you want to allow joining without sending audio
+        }
+
         console.log(`Creating peer connection to ${targetSocketId}`);
 
         const pc = new RTCPeerConnection(iceServers);
         peerConnections.current[targetSocketId] = pc;
 
-        localStreamRef.current.getTracks().forEach(track => {
-            pc.addTrack(track, localStreamRef.current!);
-        });
+        // Only add tracks if the local stream exists
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(track => {
+                pc.addTrack(track, localStreamRef.current!);
+            });
+        } else {
+             console.log(`Peer connection to ${targetSocketId} created without local audio tracks.`);
+             // You might need to handle renegotiation if the local stream becomes available later
+        }
+
 
         pc.onicecandidate = (event) => {
             if (event.candidate && socketRef.current?.connected) {
@@ -253,7 +274,8 @@ export default function VoiceRoomPage() {
             }
         };
 
-    }, [isDeafened]); // Added isDeafened dependency
+    }, [isDeafened, closePeerConnection]); // Added closePeerConnection dependency
+
 
     const closePeerConnection = useCallback((targetSocketId: string) => {
         const pc = peerConnections.current[targetSocketId];
@@ -263,6 +285,12 @@ export default function VoiceRoomPage() {
             pc.onicecandidate = null;
             pc.oniceconnectionstatechange = null;
             pc.onconnectionstatechange = null;
+            // Stop transceivers associated with the connection
+            pc.getTransceivers().forEach(transceiver => {
+                if (transceiver.stop) {
+                    transceiver.stop();
+                }
+            });
             pc.close();
             delete peerConnections.current[targetSocketId];
         }
@@ -276,7 +304,8 @@ export default function VoiceRoomPage() {
 
     // --- Socket.IO Connection and Data Handling ---
     useEffect(() => {
-        if (configError || !roomDetails || !isAuthenticated || !currentUser || !localStreamRef.current) {
+         // Proceed with connection even if localStreamRef is null
+        if (configError || !roomDetails || !isAuthenticated || !currentUser) {
             return;
         }
         if (socketRef.current || isConnecting) {
@@ -337,19 +366,25 @@ export default function VoiceRoomPage() {
             setChatMessages(data.messages || []);
             prevMessagesCountRef.current = data.messages?.length || 0;
 
-             if (data.existingParticipantIds && localStreamRef.current) {
+             if (data.existingParticipantIds) {
                 console.log('Initiating connections to existing participants:', data.existingParticipantIds);
                 for (const targetSocketId of data.existingParticipantIds) {
                     if (targetSocketId !== socket.id) {
                          try {
+                            // Create connection even if local stream isn't ready yet
                             createPeerConnection(targetSocketId);
                             const pc = peerConnections.current[targetSocketId];
                             if (!pc) continue;
 
-                            const offer = await pc.createOffer();
-                            await pc.setLocalDescription(offer);
-                            console.log(`Sending offer to ${targetSocketId}`);
-                             socketRef.current?.emit('webrtc_offer', { targetSocketId, offer });
+                             // Only send offer if we have a local stream to offer tracks
+                            if (localStreamRef.current) {
+                                const offer = await pc.createOffer();
+                                await pc.setLocalDescription(offer);
+                                console.log(`Sending offer to ${targetSocketId}`);
+                                socketRef.current?.emit('webrtc_offer', { targetSocketId, offer });
+                            } else {
+                                 console.log(`Not sending offer to ${targetSocketId} yet (no local stream).`);
+                            }
                          } catch (err) {
                             console.error(`Error creating offer for ${targetSocketId}:`, err);
                          }
@@ -366,6 +401,20 @@ export default function VoiceRoomPage() {
                  if (participant.username !== currentUser.username) {
                     toast({ description: `${participant.username} joined the room.` });
                  }
+                 // Important: Initiate connection *to* the new participant
+                 // (they will initiate connection *to us* via room_state)
+                 createPeerConnection(participant.id);
+                 // If we have local stream, send offer
+                 if (localStreamRef.current && peerConnections.current[participant.id]) {
+                     const pc = peerConnections.current[participant.id];
+                     pc.createOffer()
+                        .then(offer => pc.setLocalDescription(offer))
+                        .then(() => {
+                             console.log(`Sending offer to new participant ${participant.id}`);
+                             socketRef.current?.emit('webrtc_offer', { targetSocketId: participant.id, offer: pc.localDescription });
+                         })
+                        .catch(err => console.error(`Error creating offer for new participant ${participant.id}:`, err));
+                 }
              }
         };
 
@@ -378,7 +427,7 @@ export default function VoiceRoomPage() {
                 return prev.filter(p => p.id !== targetSocketId);
             });
              // Count will be updated via 'participant_count_update'
-            if(leftUsername !== currentUser.username) {
+            if(currentUser && leftUsername !== currentUser.username) {
                 toast({ description: `${leftUsername} left the room.` });
             }
              closePeerConnection(targetSocketId);
@@ -390,6 +439,11 @@ export default function VoiceRoomPage() {
 
         const handleParticipantUpdate = (update: Partial<Participant> & { id: string }) => {
             setParticipants(prev => prev.map(p => p.id === update.id ? { ...p, ...update } : p));
+             // Check if the update is for the current user and relates to speaking status
+            if (update.id === socket.id && typeof update.isSpeaking === 'boolean') {
+                 console.log('Speaking status update received:', update.isSpeaking);
+                 // TODO: Add visual feedback for speaking state if needed
+            }
         };
 
         // --- Handle Participant Count Updates ---
@@ -401,10 +455,11 @@ export default function VoiceRoomPage() {
         // --- WebRTC Signaling Handlers ---
         const handleWebRTCOffer = async ({ senderSocketId, offer }: { senderSocketId: string, offer: RTCSessionDescriptionInit }) => {
             console.log(`Received offer from ${senderSocketId}`);
-            if (!localStreamRef.current) {
-                 console.error("Cannot handle offer: Local stream not ready.");
-                 return;
-            }
+            // No longer checking localStreamRef here, as we want to receive audio even if we can't send
+            // if (!localStreamRef.current) {
+            //      console.error("Cannot handle offer: Local stream not ready.");
+            //      return;
+            // }
              if (peerConnections.current[senderSocketId]) {
                  console.warn(`Received offer from ${senderSocketId}, but connection already exists. Closing old one.`);
                  closePeerConnection(senderSocketId);
@@ -431,28 +486,34 @@ export default function VoiceRoomPage() {
         const handleWebRTCAnswer = async ({ senderSocketId, answer }: { senderSocketId: string, answer: RTCSessionDescriptionInit }) => {
             console.log(`Received answer from ${senderSocketId}`);
             const pc = peerConnections.current[senderSocketId];
-            if (pc && pc.signalingState === 'have-local-offer') {
+             // Check if connection exists and is in the correct state to receive an answer
+            if (pc && (pc.signalingState === 'have-local-offer' || pc.signalingState === 'stable')) { // Allow answer even if stable (re-negotiation)
                  try {
                      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                     console.log(`Connection established with ${senderSocketId}`);
+                     console.log(`Connection established/updated with ${senderSocketId}`);
                  } catch (err) {
                       console.error(`Error handling answer from ${senderSocketId}:`, err);
                  }
             } else {
-                console.warn(`Received unexpected answer from ${senderSocketId} or connection not ready.`);
+                console.warn(`Received unexpected answer from ${senderSocketId} or connection state was ${pc?.signalingState}.`);
             }
         };
 
         const handleWebRTCIceCandidate = async ({ senderSocketId, candidate }: { senderSocketId: string, candidate: RTCIceCandidateInit }) => {
             const pc = peerConnections.current[senderSocketId];
-            if (pc && candidate) {
+            if (pc && candidate && pc.remoteDescription) { // Only add candidate if remote description is set
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
                 } catch (err) {
-                    console.error(`Error adding ICE candidate from ${senderSocketId}:`, err);
+                    // Ignore benign errors like candidate added before remote description set
+                    if (!err.message.includes("Can't add ICE Candidate without remoteDescription")) {
+                       console.error(`Error adding ICE candidate from ${senderSocketId}:`, err);
+                    }
                 }
             } else if (!pc) {
                  // console.warn(`Received ICE candidate from ${senderSocketId} but no peer connection found.`);
+            } else if (!pc.remoteDescription) {
+                 // console.warn(`Received ICE candidate from ${senderSocketId} but remote description not set yet. Ignoring.`);
             }
         };
 
@@ -489,7 +550,8 @@ export default function VoiceRoomPage() {
             peerConnections.current = {};
             remoteAudioRefs.current = {};
         };
-    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection]);
+    // Added localStreamRef as dependency to re-evaluate WebRTC offers when stream becomes available
+    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection, localStreamRef.current]);
 
 
     // --- Scroll chat to bottom ---
@@ -563,6 +625,10 @@ export default function VoiceRoomPage() {
   }, [router, roomDetails?.name, toast, closePeerConnection]);
 
     const toggleMute = useCallback(() => {
+        if (!localStreamRef.current) {
+             toast({ variant: "warning", title: "Mute Failed", description: "Microphone not available." });
+             return;
+        }
         const newMutedState = !isMuted;
         setIsMuted(newMutedState);
 
@@ -573,7 +639,7 @@ export default function VoiceRoomPage() {
         if (socketRef.current?.connected) {
             socketRef.current.emit('update_participant', { roomId, updates: { isMuted: newMutedState } });
         }
-    }, [isMuted, roomId]);
+    }, [isMuted, roomId, toast]);
 
 
     const toggleDeafen = useCallback(() => {
@@ -584,17 +650,16 @@ export default function VoiceRoomPage() {
             audioEl.muted = newDeafenedState;
         });
 
+        // Automatically mute if deafening, but only unmute if they weren't previously muted
         if (newDeafenedState && !isMuted) {
-             setIsMuted(true);
-             localStreamRef.current?.getAudioTracks().forEach(track => {
-                track.enabled = false;
-            });
-            if (socketRef.current?.connected) {
-                socketRef.current.emit('update_participant', { roomId, updates: { isMuted: true } });
-            }
+             toggleMute(); // Mute the user
+        } else if (!newDeafenedState && isMuted && localStreamRef.current) {
+            // Check if user was muted *because* they were deafened
+            // This part is tricky, maybe simpler to just let user unmute manually
+            // For simplicity, we won't auto-unmute here. User can click unmute separately.
         }
         console.log("Deafen state changed:", newDeafenedState);
-    }, [isDeafened, isMuted, roomId]);
+    }, [isDeafened, isMuted, roomId, toggleMute]);
 
 
   // --- Render Logic ---
@@ -691,12 +756,13 @@ export default function VoiceRoomPage() {
                 <AlertDescription>{connectionError}</AlertDescription>
              </Alert>
            )}
-            {!localStreamRef.current && isAuthenticated && !connectionError && (
+            {/* Removed the "Mic access needed" alert */}
+            {/* {!localStreamRef.current && isAuthenticated && !connectionError && (
                  <Alert variant="destructive" className="mt-2 p-2 text-xs">
                     <MicOff className="h-3 w-3" />
                     <AlertDescription>Mic access needed</AlertDescription>
                  </Alert>
-            )}
+            )} */}
         </div>
 
         {/* Participant List */}
