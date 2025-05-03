@@ -129,16 +129,13 @@ export default function LivePage() {
 
     setIsConnecting(true);
     setConnectionError(null); // Clear previous errors
-    console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL}...`);
+    console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL} using WebSockets only...`);
 
-    // Standard Socket.IO client connection
+    // Standard Socket.IO client connection, explicitly use only WebSockets
     const socket = io(SOCKET_SERVER_URL, {
-        // For standard deployments (like Railway), no specific path needed unless configured on server
-        // path: '/my-custom-path/', // Only if server uses a custom path
-        transports: ['polling', 'websocket'], // Allow both, library will choose best available
+        transports: ['websocket'], // Use only WebSocket transport
         reconnectionAttempts: 3, // Limit reconnection attempts
         timeout: 10000, // Connection timeout
-        // auth: { token: 'your_auth_token' } // If you need authentication
     });
     socketRef.current = socket;
 
@@ -165,22 +162,19 @@ export default function LivePage() {
     };
 
     const handleConnectError = (error: any) => { // Use 'any' to access potential transport details
-        console.error('Socket.IO connection error:', error);
+        console.error('Socket.IO connection error (WebSocket):', error);
         setIsConnecting(false);
         socketRef.current = null; // Clear the ref on error
 
         // Provide more specific feedback based on the error type if possible
-        let detailedMessage = `Failed to connect to the live server (${SOCKET_SERVER_URL}). Error: ${error.message || 'Unknown error'}.`;
-        // Check for specific transport errors like 'xhr poll error'
-        if (error && error.message && error.message.toLowerCase().includes('poll error')) {
-            detailedMessage = `Connection Error: ${error.message}. Please check server status, CORS, and network. Retrying might be needed.`;
-        } else if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
-             detailedMessage += ` WebSocket connection failed. Polling might be attempted. Ensure server allows WebSocket upgrades if expected.`;
+        let detailedMessage = `Failed to connect to the live server (${SOCKET_SERVER_URL}) via WebSocket. Error: ${error.message || 'Unknown error'}.`;
+         if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
+             detailedMessage += ` Ensure the server allows WebSocket upgrades and check network/firewall settings.`;
         } else if (error instanceof Error) {
             // Generic error message
-            detailedMessage = `Connection Error: ${error.message}. Please check server status and network.`;
+            detailedMessage = `WebSocket Connection Error: ${error.message}. Please check server status and network.`;
         } else {
-             detailedMessage = `An unknown connection error occurred. Please check server status and network.`;
+             detailedMessage = `An unknown WebSocket connection error occurred. Please check server status and network.`;
         }
 
         setConnectionError(detailedMessage);

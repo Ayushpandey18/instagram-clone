@@ -1,3 +1,4 @@
+
 // socket-backend/index.js
 const express = require('express');
 const http = require('http');
@@ -9,7 +10,7 @@ const server = http.createServer(app);
 // Get allowed origins from environment variable, split by comma, or default
 // Ensure the Vercel URL and localhost are included.
 const defaultOrigins = "http://localhost:9005,https://instagram-clone-ug7f.vercel.app"; // Add your Vercel URL here and localhost
-const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins).split(',');
+const allowedOrigins = (defaultOrigins).split(',');
 console.log("Allowed CORS Origins:", allowedOrigins);
 
 const io = new Server(server, {
@@ -17,14 +18,14 @@ const io = new Server(server, {
     origin: allowedOrigins, // Use the array of allowed origins
     methods: ["GET", "POST"],
   },
-  transports: ['polling', 'websocket'] // Allow both transports
+  transports: ['websocket'] // Allow ONLY WebSocket transport
 });
 
 // In-memory store for room data (replace with Redis/DB in production)
 const rooms = {}; // { roomId: { participants: { socketId: { username: '...', ... } }, messages: [] } }
 
 io.on("connection", (socket) => {
-  console.log(`User connected: ${socket.id}`);
+  console.log(`User connected via WebSocket: ${socket.id}`);
 
   // **Live Streaming Events (from /live page) - Basic handling**
    socket.on('start_live', (data) => {
@@ -173,5 +174,5 @@ app.get('/', (req, res) => {
 const port = process.env.PORT || 3001; // Fallback for local dev
 
 server.listen(port, () => {
-  console.log(`Socket.IO server listening on *:${port}`);
+  console.log(`Socket.IO server listening on *:${port} (WebSockets only)`);
 });
