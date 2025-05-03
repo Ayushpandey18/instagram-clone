@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 
 // Get allowed origins from environment variable, split by comma, or default
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:9005,http://localhost:8888").split(',');
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:9005,http://localhost:8888,https://instagram-clone-seven-lovat.vercel.app/").split(',');
 console.log("Allowed CORS Origins:", allowedOrigins);
 
 const io = new Server(server, {
