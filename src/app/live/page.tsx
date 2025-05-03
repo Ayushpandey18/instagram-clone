@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -40,6 +39,8 @@ export default function LivePage() {
         duration: 15000,
       });
     }
+     // Log the URL being used
+     console.log("Using Socket.IO Server URL:", SOCKET_SERVER_URL);
   }, [toast]); // Added toast dependency
 
 
@@ -126,22 +127,15 @@ export default function LivePage() {
         return;
     }
 
-    // If permissions are denied, show message and don't connect (unless you want viewer-only mode)
-    // if(hasCameraPermission === false || hasMicPermission === false) {
-    //     console.log("Permissions denied, not connecting to socket.");
-    //     // setConnectionError("Permissions denied, cannot connect."); // Optionally set error
-    //     return;
-    // }
-
-
     setIsConnecting(true);
     setConnectionError(null); // Clear previous errors
-    console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL} using polling...`);
+    console.log(`Attempting to connect to Socket.IO server at ${SOCKET_SERVER_URL}...`);
 
-    // Explicitly define transports, FORCING polling for Vercel/Serverless compatibility
+    // Standard Socket.IO client connection
     const socket = io(SOCKET_SERVER_URL, {
-        path: '/.netlify/functions/socket/socket.io/', // IMPORTANT: Path for Netlify functions proxy
-        transports: ['polling'], // FORCE POLLING ONLY
+        // For standard deployments (like Railway), no specific path needed unless configured on server
+        // path: '/my-custom-path/', // Only if server uses a custom path
+        transports: ['polling', 'websocket'], // Allow both, library will choose best available
         reconnectionAttempts: 3, // Limit reconnection attempts
         timeout: 10000, // Connection timeout
         // auth: { token: 'your_auth_token' } // If you need authentication
@@ -149,7 +143,7 @@ export default function LivePage() {
     socketRef.current = socket;
 
     const handleConnect = () => {
-        console.log('Connected to Socket.IO server:', socket.id);
+        console.log('Connected to Socket.IO server:', socket.id, 'using transport:', socket.io.engine.transport.name);
         setIsConnecting(false);
         setConnectionError(null); // Clear error on successful connect
         toast({ title: 'Connected', description: 'Ready for live stream.' });
@@ -176,12 +170,12 @@ export default function LivePage() {
         socketRef.current = null; // Clear the ref on error
 
         // Provide more specific feedback based on the error type if possible
-        let detailedMessage = `Failed to connect to the live server. Error: ${error.message}.`;
+        let detailedMessage = `Failed to connect to the live server (${SOCKET_SERVER_URL}). Error: ${error.message || 'Unknown error'}.`;
         // Check for specific transport errors like 'xhr poll error'
         if (error && error.message && error.message.toLowerCase().includes('poll error')) {
-            detailedMessage = `Connection Error: ${error.message}. Please check server status at ${SOCKET_SERVER_URL}, CORS configuration, and network connectivity. Retrying might be needed.`;
+            detailedMessage = `Connection Error: ${error.message}. Please check server status, CORS, and network. Retrying might be needed.`;
         } else if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
-             detailedMessage += ` WebSocket connection failed (expected on serverless, polling fallback should occur).`;
+             detailedMessage += ` WebSocket connection failed. Polling might be attempted. Ensure server allows WebSocket upgrades if expected.`;
         } else if (error instanceof Error) {
             // Generic error message
             detailedMessage = `Connection Error: ${error.message}. Please check server status and network.`;
@@ -234,8 +228,6 @@ export default function LivePage() {
      // Check connection status
      if (!socketRef.current || !socketRef.current.connected) {
         toast({ variant: 'destructive', title: 'Not Connected', description: 'Cannot go live. Not connected to the live server. Please check the connection.' });
-        // Optionally attempt to reconnect here if desired
-        // if (socketRef.current) socketRef.current.connect(); else console.error("Socket ref is null");
         return;
     }
 

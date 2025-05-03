@@ -78,6 +78,8 @@ export default function VoiceRoomPage() {
       });
        setIsLoading(false); // Stop loading if URL is missing
     }
+    // Log the URL being used
+    console.log("Using Socket.IO Server URL:", SOCKET_SERVER_URL);
   }, [toast]); // Added toast dependency
 
    // --- Fetch Current User Details ---
@@ -141,12 +143,13 @@ export default function VoiceRoomPage() {
 
     setIsConnecting(true);
     setConnectionError(null);
-    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL} via Netlify path...`);
+    console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL}...`);
 
-    // Explicitly define transports and path for Netlify Functions
+    // Standard Socket.IO client connection
      const socket = io(SOCKET_SERVER_URL, {
-        path: '/.netlify/functions/socket/socket.io/', // IMPORTANT: Path for Netlify functions proxy
-        transports: ['polling'], // FORCE POLLING ONLY
+        // For standard deployments (like Railway), no specific path needed unless configured on server
+        // path: '/my-custom-path/', // Only if server uses a custom path
+        transports: ['polling', 'websocket'], // Allow both, library will choose best available
         reconnectionAttempts: 3, // Limit reconnection attempts
         timeout: 10000, // Connection timeout
         // You might pass user details for authentication or initial setup
@@ -156,7 +159,7 @@ export default function VoiceRoomPage() {
 
 
     const handleConnect = () => {
-        console.log('Connected to Socket.IO server:', socket.id);
+        console.log('Connected to Socket.IO server:', socket.id, 'using transport:', socket.io.engine.transport.name);
         setIsConnecting(false);
         setConnectionError(null);
         toast({ title: 'Connected', description: `Joined voice room: ${roomDetails.name}` });
@@ -189,11 +192,11 @@ export default function VoiceRoomPage() {
         setIsConnecting(false);
         socketRef.current = null; // Clear the ref
 
-        let errorMessage = `Could not connect to the voice room server. Error: ${error.message || 'Unknown error'}`;
+        let errorMessage = `Could not connect to the voice room server (${SOCKET_SERVER_URL}). Error: ${error.message || 'Unknown error'}`;
         if (error && error.message && error.message.toLowerCase().includes('poll error')) {
-            errorMessage = `Connection Error: ${error.message}. Please check server status at ${SOCKET_SERVER_URL}, CORS configuration, and network connectivity. Retrying might be needed.`;
+            errorMessage = `Connection Error: ${error.message}. Please check server status, CORS, and network. Retrying might be needed.`;
         } else if (error && error.message && error.message.toLowerCase().includes('websocket error')) {
-            errorMessage = `WebSocket connection failed (expected on serverless, polling should work). Error: ${error.message}`;
+            errorMessage = `WebSocket connection failed. Polling might be attempted. Ensure server allows WebSocket upgrades if expected. Error: ${error.message}`;
         } else if (error instanceof Error) {
              errorMessage = `Connection Error: ${error.message}. Please check server status and network.`;
         }

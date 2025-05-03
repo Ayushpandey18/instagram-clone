@@ -1,0 +1,20 @@
+{
+  "name": "instagram-socket-backend",
+  "version": "1.0.0",
+  "description": "Socket.IO server for Instagram clone backend, deployable on Railway.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

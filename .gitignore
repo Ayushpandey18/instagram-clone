@@ -3,12 +3,8 @@
 # dependencies
 /node_modules
 /.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+.pnp.js
+.yarn/install-state.gz
 
 # testing
 /coverage
@@ -28,7 +24,10 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+pnpm-debug.log*
+
+# local env files
+.env*.local
 
 # vercel
 .vercel
@@ -37,5 +36,23 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.genkit/*
-.env*
+# editor directories and files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
+
+# Temporal files
+*.temporal
+
+# User-specific files should be gitignored locally, not committed. Example:
+# .env
+
+# Backend directory if nested within frontend project
+/socket-backend/node_modules
+/socket-backend/.env
+/socket-backend/npm-debug.log
+/socket-backend/yarn-debug.log
+/socket-backend/yarn-error.log
