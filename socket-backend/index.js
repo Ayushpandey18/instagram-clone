@@ -8,9 +8,9 @@ const app = express();
 const server = http.createServer(app);
 
 // Get allowed origins from environment variable, split by comma, or default
-// Ensure the Vercel URL and localhost are included.
-const defaultOrigins = "http://localhost:9005,https://instagram-clone-ug7f.vercel.app"; // Add your Vercel URL here and localhost
-const allowedOrigins = (defaultOrigins).split(',');
+// Ensure the Vercel URL and localhost are included in the default or ENV var.
+const defaultOrigins = "https://instagram-clone-ug7f.vercel.app,http://localhost:9005";
+const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins).split(',').map(origin => origin.trim()); // Trim whitespace
 console.log("Allowed CORS Origins:", allowedOrigins);
 
 const io = new Server(server, {
@@ -18,7 +18,7 @@ const io = new Server(server, {
     origin: allowedOrigins, // Use the array of allowed origins
     methods: ["GET", "POST"],
   },
-  transports: ['websocket'] // Allow ONLY WebSocket transport
+  transports: ['websocket'] // Explicitly use ONLY WebSocket transport as per previous request
 });
 
 // In-memory store for room data (replace with Redis/DB in production)
@@ -66,6 +66,7 @@ io.on("connection", (socket) => {
     // Add participant
     rooms[roomId].participants[socket.id] = {
        username: user.username,
+       // Use a default placeholder if avatarUrl is missing
        avatarUrl: user.avatarUrl || `https://picsum.photos/seed/${socket.id}/40/40`,
        isMuted: false,
        isSpeaking: false,
@@ -101,6 +102,7 @@ io.on("connection", (socket) => {
 
     // Store message history (simple in-memory, limited)
     rooms[roomId].messages.push(newMessage);
+    // Limit message history size
     if (rooms[roomId].messages.length > 50) rooms[roomId].messages.shift();
 
     // Broadcast message to everyone in the room
@@ -129,13 +131,14 @@ io.on("connection", (socket) => {
     console.log(`User disconnected: ${socket.id}, Reason: ${reason}`);
     // Find which room the user was in and notify others
     for (const roomId in rooms) {
-        if (rooms[roomId].participants[socket.id]) {
+        if (rooms[roomId]?.participants[socket.id]) { // Check if participants exist
              handleLeave(roomId, socket, true); // Pass true to indicate disconnect cleanup
              break; // Assuming user can only be in one room
         }
     }
   });
 
+  // General error handler for the socket
   socket.on('error', (error) => {
     console.error(`Socket Error (${socket.id}):`, error);
   });
@@ -143,18 +146,19 @@ io.on("connection", (socket) => {
 });
 
 function handleLeave(roomId, socket, isDisconnect = false) {
-    if (!roomId || !rooms[roomId]?.participants[socket.id]) {
-        if (!isDisconnect) { // Don't warn on disconnect if participant already removed
-            console.warn(`Invalid leave_voice_room / disconnect handling:`, {roomId, participantExists: !!rooms[roomId]?.participants[socket.id]});
+    // Check if room and participant exist before proceeding
+    if (!roomId || !rooms[roomId]?.participants || !rooms[roomId].participants[socket.id]) {
+        if (!isDisconnect || rooms[roomId]?.participants[socket.id]) { // Don't warn on disconnect if participant already gone
+            console.warn(`Invalid leave/disconnect handling: Room or participant not found.`, { roomId, socketId: socket.id, roomExists: !!rooms[roomId], participantExists: !!rooms[roomId]?.participants[socket.id] });
         }
         return;
     }
-    console.log(`User ${socket.id} (${rooms[roomId].participants[socket.id].username}) left room ${roomId}`);
+    const username = rooms[roomId].participants[socket.id].username; // Get username before deleting
+    console.log(`User ${socket.id} (${username}) left room ${roomId}`);
     socket.leave(roomId); // Socket leaves the room channel
-    const leftUser = rooms[roomId].participants[socket.id];
-    delete rooms[roomId].participants[socket.id];
+    delete rooms[roomId].participants[socket.id]; // Remove participant from room data
 
-    // Notify others in the room
+    // Notify others in the room that the participant left
     socket.to(roomId).emit('participant_left', socket.id);
 
    // Clean up room if empty
