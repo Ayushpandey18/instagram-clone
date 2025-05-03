@@ -35,7 +35,7 @@ interface ChatMessage {
 }
 
 // Get Socket.IO server URL from environment variable
-const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
 
 
 export default function VoiceRoomPage() {
@@ -192,6 +192,8 @@ export default function VoiceRoomPage() {
             errorMessage = `WebSocket connection failed. Ensure the server allows WebSocket upgrades and check network/firewall settings. Error: ${error.message}`;
         } else if (error instanceof Error) {
              errorMessage = `WebSocket Connection Error: ${error.message}. Please check server status and network.`;
+        } else if (error && error.message && error.message.toLowerCase().includes('xhr poll error')) {
+             errorMessage = `WebSocket connection failed, fallback to polling also failed. Please check CORS settings on the server and network connectivity. Error: ${error.message}`;
         }
 
         setConnectionError(errorMessage);
@@ -276,7 +278,8 @@ export default function VoiceRoomPage() {
        setParticipants([]); // Clear participants on unmount/disconnect
        setChatMessages([]); // Clear messages
     };
-   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, isConnecting]); // Dependencies, added isConnecting
+   // Removed toast from dependency array
+   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, isConnecting]); // Dependencies, added isConnecting
 
 
   // --- Scroll chat to bottom ---

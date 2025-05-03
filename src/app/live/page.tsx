@@ -12,7 +12,7 @@ import io, { Socket } from 'socket.io-client'; // Import socket.io-client and So
 import { cn } from '@/lib/utils';
 
 // Get Socket.IO server URL from environment variable
-const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001'; // Default for local dev
 
 export default function LivePage() {
   const [isLive, setIsLive] = useState(false);
@@ -177,7 +177,7 @@ export default function LivePage() {
              detailedMessage = `An unknown WebSocket connection error occurred. Please check server status and network.`;
         }
 
-        setConnectionError(detailedMessage);
+        setConnectionError(detailedMessage + " Please try refreshing.");
         toast({
             variant: 'destructive',
             title: 'Connection Error',
@@ -210,7 +210,8 @@ export default function LivePage() {
        setIsConnecting(false); // Ensure connecting state is reset
     };
   // Only reconnect if URL, permissions status change, or connection state requires it
-  }, [SOCKET_SERVER_URL, hasCameraPermission, hasMicPermission, toast, isLive, isConnecting]); // Added isConnecting to dependencies
+  // Removed toast from dependency array
+  }, [SOCKET_SERVER_URL, hasCameraPermission, hasMicPermission, isLive, isConnecting]);
 
 
   const handleGoLive = () => {
