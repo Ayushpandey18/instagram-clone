@@ -144,6 +144,7 @@ function dispatch(action: Action) {
 type Toast = Omit<ToasterToast, "id">
 
 function useToast() {
+  // Moved hook calls inside the custom hook
   const [state, setState] = React.useState<State>(memoryState)
 
   React.useEffect(() => {
