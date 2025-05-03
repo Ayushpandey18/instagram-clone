@@ -7,7 +7,9 @@ const app = express();
 const server = http.createServer(app);
 
 // Get allowed origins from environment variable, split by comma, or default
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:9005,http://localhost:8888,https://instagram-clone-seven-lovat.vercel.app/").split(',');
+// Ensure the Vercel URL and localhost are included.
+const defaultOrigins = "http://localhost:9005,https://instagram-clone-ug7f.vercel.app"; // Add your Vercel URL here and localhost
+const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins).split(',');
 console.log("Allowed CORS Origins:", allowedOrigins);
 
 const io = new Server(server, {
@@ -15,8 +17,7 @@ const io = new Server(server, {
     origin: allowedOrigins, // Use the array of allowed origins
     methods: ["GET", "POST"],
   },
-  // Railway might support WebSockets, but polling is a safe fallback
-  // transports: ['polling', 'websocket'] // Allow both, let client decide
+  transports: ['polling', 'websocket'] // Allow both transports
 });
 
 // In-memory store for room data (replace with Redis/DB in production)
