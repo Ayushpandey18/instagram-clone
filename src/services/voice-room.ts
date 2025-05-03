@@ -1,4 +1,5 @@
 
+
 /**
  * Represents a voice room.
  */
@@ -16,137 +17,155 @@ export interface VoiceRoom {
    */
   passwordProtected: boolean;
    /**
-   * Optional: Password hash or verification token (server-side concept, might not be exposed directly)
-   */
-   // passwordHash?: string;
+    * Optional: Number of participants (added for listing)
+    */
+   participantCount?: number;
 }
 
-// --- Mock Data Store (Replace with actual database/API calls) ---
-const mockVoiceRooms: Map<string, VoiceRoom> = new Map([
+// Get the backend API base URL from environment variable
+// IMPORTANT: Ensure NEXT_PUBLIC_SOCKET_URL points to the BASE URL of your backend server (e.g., https://your-railway-app.up.railway.app)
+// It should NOT include /socket.io
+const API_BASE_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
-]);
-// --- End Mock Data Store ---
+if (!API_BASE_URL) {
+  console.error("FATAL ERROR: NEXT_PUBLIC_SOCKET_URL environment variable is not set!");
+  // You might want to throw an error here or handle it appropriately
+  // depending on whether this code runs server-side or client-side during build.
+}
 
 
 /**
- * Asynchronously creates a voice room.
- * In a real app, this would interact with a backend API or database.
+ * Asynchronously creates a voice room by calling the backend API.
  *
  * @param name The name of the voice room.
  * @param password The password for the voice room (optional). If provided, sets passwordProtected to true.
  * @returns A promise that resolves to the created VoiceRoom object.
- * @throws Error if room creation fails (e.g., duplicate name, server error).
+ * @throws Error if room creation fails (e.g., duplicate name, server error, network error).
  */
 export async function createVoiceRoom(name: string, password?: string): Promise<VoiceRoom> {
-  console.log(`Attempting to create room: ${name}, Password protected: ${!!password}`);
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 300));
+    if (!API_BASE_URL) {
+        throw new Error("Backend API URL is not configured.");
+    }
+    console.log(`[Service] Creating room via API: ${name}, Password protected: ${!!password}`);
 
-  // Basic validation (more robust validation should be on the server)
-  if (!name || name.length > 50) {
-     throw new Error("Invalid room name.");
-  }
-   // Example: Check for duplicate names (simple mock implementation)
-  // for (const room of mockVoiceRooms.values()) {
-  //   if (room.name.toLowerCase() === name.toLowerCase()) {
-  //     throw new Error(`Room name "${name}" is already taken.`);
-  //   }
-  // }
+    const response = await fetch(`${API_BASE_URL}/api/rooms`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, password }), // Send password only if provided
+    });
 
-  const newRoom: VoiceRoom = {
-    id: `room-${Date.now()}-${Math.random().toString(16).substring(2, 8)}`, // Generate a somewhat unique ID
-    name: name,
-    passwordProtected: !!password,
-    // In a real backend, you'd store a hash of the password, not the password itself.
-    // passwordHash: password ? await hashPassword(password) : undefined,
-  };
+    if (!response.ok) {
+        let errorMessage = `Failed to create room: ${response.status} ${response.statusText}`;
+        try {
+            const errorBody = await response.json();
+            errorMessage = errorBody.message || errorMessage; // Use server message if available
+        } catch (e) {
+            // Ignore if response body is not JSON
+        }
+        console.error('[Service] Room creation failed:', errorMessage);
+        throw new Error(errorMessage);
+    }
 
-  // Add to our mock store
-  mockVoiceRooms.set(newRoom.id, newRoom);
-  console.log('Room created:', newRoom);
-
-  // Return only the client-safe data
-  return {
-     id: newRoom.id,
-     name: newRoom.name,
-     passwordProtected: newRoom.passwordProtected,
-  };
+    const newRoom: VoiceRoom = await response.json();
+    console.log('[Service] Room created successfully via API:', newRoom);
+    return newRoom;
 }
 
 /**
- * Asynchronously retrieves a voice room by its ID.
+ * Asynchronously retrieves a voice room by its ID from the backend API.
+ * NOTE: This function is less common now that listing provides basic info.
+ * Keep it if you need detailed info for a specific room not available in the list.
  *
  * @param id The ID of the voice room to retrieve.
  * @returns A promise that resolves to the VoiceRoom object or null if not found.
  */
 export async function getVoiceRoom(id: string): Promise<VoiceRoom | null> {
-   console.log(`Fetching room details for ID: ${id}`);
-   // Simulate API call delay
-   await new Promise(resolve => setTimeout(resolve, 200));
+     if (!API_BASE_URL) {
+        console.error("[Service] Backend API URL is not configured for getVoiceRoom.");
+        return null; // Or throw error
+    }
+   console.log(`[Service] Fetching room details via API for ID: ${id}`);
+   // Simulate API call delay - REMOVE IN PRODUCTION
+   // await new Promise(resolve => setTimeout(resolve, 200));
 
-   const room = mockVoiceRooms.get(id);
-
-   if (room) {
-     // Return client-safe data (omit sensitive fields like password hashes)
-     return {
-       id: room.id,
-       name: room.name,
-       passwordProtected: room.passwordProtected,
-     };
-   } else {
-     console.log(`Room with ID ${id} not found.`);
-     return null;
+   // NOTE: The backend currently doesn't have a specific endpoint for GET /api/rooms/:id
+   // Usually, you'd fetch the list and find the room, or the backend would provide this endpoint.
+   // For now, we'll simulate by fetching all and filtering, which is inefficient.
+   try {
+        const allRooms = await getAllVoiceRooms();
+        const room = allRooms.find(r => r.id === id);
+        return room || null;
+   } catch (error) {
+        console.error(`[Service] Error fetching room ${id}:`, error);
+        return null;
    }
 }
 
 /**
- * Asynchronously retrieves all available voice rooms.
- * In a real app, this might include pagination or filtering.
+ * Asynchronously retrieves all available voice rooms from the backend API.
  *
  * @returns A promise that resolves to an array of VoiceRoom objects.
  */
 export async function getAllVoiceRooms(): Promise<VoiceRoom[]> {
-   console.log('Fetching all voice rooms...');
-   // Simulate API call delay
-   await new Promise(resolve => setTimeout(resolve, 400));
-
-   // Convert map values to array and return client-safe data
-   const rooms = Array.from(mockVoiceRooms.values()).map(room => ({
-     id: room.id,
-     name: room.name,
-     passwordProtected: room.passwordProtected,
-   }));
-
-   console.log(`Found ${rooms.length} rooms.`);
-   // Sort rooms, e.g., by name or creation date (using name for simplicity)
-   return rooms.sort((a, b) => a.name.localeCompare(b.name));
+   if (!API_BASE_URL) {
+        throw new Error("Backend API URL is not configured.");
+    }
+   console.log(`[Service] Fetching all voice rooms from API: ${API_BASE_URL}/api/rooms`);
+   try {
+        const response = await fetch(`${API_BASE_URL}/api/rooms`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch rooms: ${response.status} ${response.statusText}`);
+        }
+        const rooms: VoiceRoom[] = await response.json();
+        console.log(`[Service] Found ${rooms.length} rooms via API.`);
+        // Sort rooms locally if needed (backend might also sort)
+        return rooms.sort((a, b) => a.name.localeCompare(b.name));
+   } catch (error) {
+        console.error("[Service] Error fetching all rooms:", error);
+        // Depending on the context, you might return [] or re-throw
+        throw error; // Re-throw to let the calling component handle the error state
+        // return [];
+   }
 }
 
 /**
- * Placeholder for password verification logic.
- * In a real app, this should happen on the server.
+ * Verifies the password for a room by calling the backend API.
  *
  * @param roomId The ID of the room.
- * @param password The password attempt.
+ * @param passwordAttempt The password attempt.
  * @returns A promise resolving to true if the password is correct, false otherwise.
  */
 export async function verifyRoomPassword(roomId: string, passwordAttempt: string): Promise<boolean> {
-     console.log(`Verifying password for room ${roomId}`);
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const room = mockVoiceRooms.get(roomId);
-
-    // Basic mock verification (DO NOT USE IN PRODUCTION)
-    // In a real app, compare the hash of passwordAttempt with the stored passwordHash.
-    if (room && room.passwordProtected) {
-        // This is highly insecure, just for mocking!
-        return passwordAttempt === "password";
+    if (!API_BASE_URL) {
+        throw new Error("Backend API URL is not configured.");
     }
+     console.log(`[Service] Verifying password via API for room ${roomId}`);
 
-    // If room doesn't exist or isn't password protected, verification fails or is irrelevant.
-    return false;
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/verify`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ password: passwordAttempt }),
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            return result.success === true;
+        } else if (response.status === 401) { // Unauthorized (incorrect password)
+            return false;
+        } else {
+            // Handle other errors (404 Not Found, 400 Bad Request, 500 Server Error)
+            console.error(`[Service] Password verification failed with status ${response.status}`);
+            return false; // Or throw an error to indicate a problem beyond just wrong password
+        }
+    } catch (error) {
+        console.error("[Service] Error verifying password:", error);
+        // Depending on how you want to handle network errors vs incorrect passwords
+        // throw error; // Could re-throw to indicate a network/server issue
+        return false; // Treat network/server errors as verification failure for simplicity here
+    }
 }
-
-
-// Note: Deleting rooms, updating room settings, etc., would require additional functions.

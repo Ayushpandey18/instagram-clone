@@ -48,6 +48,14 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
       });
       return;
     }
+     if (roomName.length > 50) { // Match backend validation
+      toast({
+        title: "Validation Error",
+        description: "Room name cannot exceed 50 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (isPasswordProtected && !password.trim()) {
         toast({
             title: "Validation Error",
@@ -56,21 +64,13 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
         });
         return;
     }
-    if (isPasswordProtected && password.length < 4) { // Example: Basic password length validation
-         toast({
-            title: "Validation Error",
-            description: "Password must be at least 4 characters long.",
-            variant: "destructive",
-        });
-        return;
-    }
+    // Add more robust password validation if needed (e.g., minimum length)
 
 
     setIsLoading(true);
     try {
-        // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const newRoom = await createVoiceRoom(roomName, isPasswordProtected ? password : undefined);
+      // Call the service function which now makes an API request
+      const newRoom = await createVoiceRoom(roomName.trim(), isPasswordProtected ? password : undefined);
       toast({
         title: "Success",
         description: `Voice room "${newRoom.name}" created successfully.`,
@@ -78,14 +78,17 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
       onRoomCreated(newRoom); // Notify parent component
       resetForm();
       onOpenChange(false); // Close dialog
-    } catch (error) {
+    } catch (error: any) { // Catch specific error type
         console.error("Failed to create voice room:", error);
         toast({
             title: "Creation Failed",
-            description: "Could not create the voice room. Please try again.",
+            // Use the error message from the API/service if available
+            description: error.message || "Could not create the voice room. Please try again.",
             variant: "destructive",
         });
-        setIsLoading(false); // Keep dialog open on error
+        // Don't reset form or close dialog on error
+    } finally {
+         setIsLoading(false);
     }
   };
 
@@ -93,7 +96,6 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
   // Reset form when dialog is closed externally
   React.useEffect(() => {
       if (!isOpen) {
-          // Delay reset slightly to allow closing animation
           const timer = setTimeout(resetForm, 300);
           return () => clearTimeout(timer);
       }
@@ -120,7 +122,7 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
               className="col-span-3"
               placeholder="e.g., Gaming Session"
               disabled={isLoading}
-              maxLength={50} // Add max length
+              maxLength={50} // Consistent with backend validation
             />
           </div>
           <div className="grid grid-cols-4 items-center gap-4">
@@ -131,10 +133,13 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
                 <Switch
                     id="password-switch"
                     checked={isPasswordProtected}
-                    onCheckedChange={setIsPasswordProtected}
+                    onCheckedChange={(checked) => {
+                        setIsPasswordProtected(checked);
+                        if (!checked) {
+                            setPassword(''); // Clear password if switching to public
+                        }
+                    }}
                     disabled={isLoading}
-                    // Use theme colors via data attributes implicitly handled by Switch component
-                    // className="data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
                 />
                 <Label htmlFor="password-switch" className="text-sm text-muted-foreground cursor-pointer">
                  {isPasswordProtected ? 'Password enabled' : 'Open to everyone'}
@@ -142,7 +147,7 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
             </div>
           </div>
            {isPasswordProtected && (
-             <div className="grid grid-cols-4 items-center gap-4 transition-all duration-300 ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" data-state={isPasswordProtected ? 'open' : 'closed'}>
+             <div className="grid grid-cols-4 items-center gap-4 transition-opacity duration-300 ease-in-out" style={{ opacity: isPasswordProtected ? 1 : 0 }}>
                 <Label htmlFor="room-password" className="text-right">
                 Password
                 </Label>
@@ -153,7 +158,7 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
                 onChange={(e) => setPassword(e.target.value)}
                 className="col-span-3"
                 placeholder="Enter room password"
-                disabled={isLoading}
+                disabled={isLoading || !isPasswordProtected} // Also disable if not password protected
                 />
             </div>
            )}
@@ -162,7 +167,7 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleCreateRoom} disabled={isLoading} className="bg-primary text-primary-foreground hover:bg-primary/90">
+          <Button type="button" onClick={handleCreateRoom} disabled={isLoading || !roomName.trim() || (isPasswordProtected && !password.trim())} className="bg-primary text-primary-foreground hover:bg-primary/90">
             {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Create Room
           </Button>
