@@ -48,7 +48,7 @@ export async function createVoiceRoom(name: string, password?: string): Promise<
     }
     console.log(`[Service] Creating room via API: ${name}, Password protected: ${!!password}`);
 
-    const response = await fetch(`${API_BASE_URL}/api/rooms`, {
+    const response = await fetch(`${API_BASE_URL}api/rooms`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
