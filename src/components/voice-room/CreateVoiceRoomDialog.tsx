@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import React, { useState } from 'react';
@@ -80,12 +81,22 @@ export default function CreateVoiceRoomDialog({ isOpen, onOpenChange, onRoomCrea
       onOpenChange(false); // Close dialog
     } catch (error: any) { // Catch specific error type
         console.error("Failed to create voice room:", error);
-        toast({
-            title: "Creation Failed",
-            // Use the error message from the API/service if available
-            description: error.message || "Could not create the voice room. Please try again.",
-            variant: "destructive",
-        });
+        // Check for specific config error
+        if (error.message?.includes("Backend API URL is not configured")) {
+             toast({
+                title: "Configuration Error",
+                description: error.message,
+                variant: "destructive",
+                duration: 10000,
+            });
+        } else {
+            toast({
+                title: "Creation Failed",
+                // Use the error message from the API/service if available
+                description: error.message || "Could not create the voice room. Please try again.",
+                variant: "destructive",
+            });
+        }
         // Don't reset form or close dialog on error
     } finally {
          setIsLoading(false);

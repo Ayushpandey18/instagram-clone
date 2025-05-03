@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -26,9 +27,14 @@ export default function VoiceRoomsPage() {
           // Fetch from the service which now uses API
           const rooms = await getAllVoiceRooms();
           setVoiceRooms(rooms);
-      } catch (err: any) { // Catch specific error type
+      } catch (err: any) { // Catch specific error type, including configuration errors
           console.error("Failed to fetch voice rooms:", err);
-          setError(err.message || "Failed to load voice rooms. Please try again later.");
+          // Display a user-friendly message based on the error
+          if (err.message?.includes("Backend API URL is not configured")) {
+            setError("Configuration error: The application is not properly set up to connect to the voice room server.");
+          } else {
+            setError(err.message || "Failed to load voice rooms. Please try again later.");
+          }
       } finally {
           setIsLoading(false);
       }
@@ -65,8 +71,10 @@ export default function VoiceRoomsPage() {
                          <AlertCircle className="h-4 w-4" />
                         <AlertTitle>Error Loading Rooms</AlertTitle>
                         <AlertDescription>{error}</AlertDescription>
-                        {/* Optional: Add a retry button */}
-                        <Button variant="secondary" size="sm" onClick={fetchRooms} className="mt-3">Retry</Button>
+                        {/* Optional: Add a retry button, disable if config error */}
+                        {!error.includes("Configuration error") && (
+                             <Button variant="secondary" size="sm" onClick={fetchRooms} className="mt-3">Retry</Button>
+                        )}
                     </Alert>
                 )}
 

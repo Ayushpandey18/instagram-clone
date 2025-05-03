@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -39,12 +40,10 @@ interface ChatMessage {
 // This should be the BASE URL (e.g., https://your-railway-app.up.railway.app)
 const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
-// Ensure SOCKET_SERVER_URL exists and is logged (or handle error)
-if (!SOCKET_SERVER_URL) {
-    console.error("FATAL: NEXT_PUBLIC_SOCKET_URL is not defined!");
-    // Handle error appropriately, maybe show a persistent error message
-} else {
-    console.log("Using Socket.IO Server Base URL:", SOCKET_SERVER_URL);
+// Log if the variable is missing during build or server-side, but don't throw error immediately.
+// The error will be thrown by functions that need it if it's still missing at runtime.
+if (typeof window === 'undefined' && !SOCKET_SERVER_URL) {
+  console.warn("Warning: NEXT_PUBLIC_SOCKET_URL environment variable is not set. Socket connections will fail.");
 }
 
 
@@ -63,6 +62,7 @@ export default function VoiceRoomPage() {
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false); // Track socket connection state
   const [connectionError, setConnectionError] = useState<string | null>(null); // Specific connection error state
+  const [configError, setConfigError] = useState<string | null>(null); // State for configuration errors
 
 
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -76,17 +76,19 @@ export default function VoiceRoomPage() {
   const prevMessagesCountRef = useRef(0); // Ref to track previous message count for scrolling logic
 
    // --- Check Environment Variable ---
-   // Moved the check outside the component for immediate feedback if needed
    useEffect(() => {
     if (!SOCKET_SERVER_URL) {
-      setConnectionError("Configuration error: Socket server URL is missing. Cannot connect to voice room.");
-      toast({
-        variant: 'destructive',
-        title: 'Configuration Error',
-        description: 'The voice room server URL is not configured. Please contact support.',
-        duration: 15000,
-      });
-       setIsLoading(false); // Stop loading if URL is missing
+        const errorMsg = "Configuration error: Socket server URL is missing. Cannot connect to voice room.";
+        setConfigError(errorMsg); // Set specific config error state
+        toast({
+            variant: 'destructive',
+            title: 'Configuration Error',
+            description: 'The voice room server URL is not configured. Please contact support.',
+            duration: 15000,
+        });
+        setIsLoading(false); // Stop loading if URL is missing
+    } else {
+        setConfigError(null); // Clear config error if URL is present
     }
   }, [toast]);
 
@@ -110,13 +112,17 @@ export default function VoiceRoomPage() {
                router.push('/'); // Example redirect
            }
        };
-       fetchUser();
-   }, [toast, router]);
+       // Only fetch user if there's no config error
+       if (!configError) {
+           fetchUser();
+       }
+   }, [toast, router, configError]); // Add configError dependency
 
 
   // --- Fetch Room Details ---
    useEffect(() => {
-    if (!roomId || !currentUser) return; // Wait for user details too
+    // Don't fetch if URL is missing or user not loaded yet
+    if (!roomId || !currentUser || configError) return;
 
     const fetchRoomDetails = async () => {
       setIsLoading(true);
@@ -135,25 +141,31 @@ export default function VoiceRoomPage() {
         }
       } catch (error: any) { // Catch specific error type
         console.error("Failed to fetch room details:", error);
-        toast({ title: "Error Loading Room", description: error.message || "Failed to load room details.", variant: "destructive" });
-        router.push('/voice-rooms');
+        // Check if it's the config error we already handled
+        if (error.message?.includes("Backend API URL is not configured")) {
+             setConfigError(error.message); // Ensure config error state is set
+             toast({ title: "Configuration Error", description: error.message, variant: "destructive", duration: 15000 });
+        } else {
+            toast({ title: "Error Loading Room", description: error.message || "Failed to load room details.", variant: "destructive" });
+            router.push('/voice-rooms'); // Redirect on other errors
+        }
       } finally {
         setIsLoading(false); // Finish loading room details
       }
     };
     fetchRoomDetails();
-   }, [roomId, router, toast, currentUser]); // Added currentUser dependency
+   }, [roomId, router, toast, currentUser, configError]); // Added configError dependency
 
 
   // --- Socket.IO Connection and Data Handling ---
    useEffect(() => {
      // Conditions to establish connection:
-     // 1. Socket URL must be defined
+     // 1. Socket URL must be defined (checked by configError being null)
      // 2. Room details must be loaded
      // 3. User must be authenticated for the room
      // 4. Current user details must be fetched
      // 5. Not already connecting or connected
-    if (!SOCKET_SERVER_URL || !roomDetails || !isAuthenticated || !currentUser) {
+    if (configError || !roomDetails || !isAuthenticated || !currentUser) {
         return;
     }
 
@@ -168,7 +180,7 @@ export default function VoiceRoomPage() {
     console.log(`Attempting to connect to Socket.IO for room ${roomId} at ${SOCKET_SERVER_URL} using WebSockets only...`);
 
     // Connect to the Socket.IO server using the base URL
-     const socket = io(SOCKET_SERVER_URL, {
+     const socket = io(SOCKET_SERVER_URL!, { // Use non-null assertion as we checked configError
         transports: ['websocket'], // Use ONLY WebSocket transport
         reconnectionAttempts: 3,
         timeout: 10000,
@@ -232,8 +244,9 @@ export default function VoiceRoomPage() {
 
     const handleParticipantJoined = (participant: Participant) => {
         console.log('Participant joined:', participant);
+        // Prevent adding self again if server echoes join event
         setParticipants(prev => prev.find(p => p.id === participant.id) ? prev : [...prev, participant]);
-        if (participant.username !== currentUser?.username) { // Check against currentUser
+        if (participant.username !== currentUser.username) { // Check against currentUser
             toast({ description: `${participant.username} joined the room.` });
         }
     };
@@ -246,7 +259,7 @@ export default function VoiceRoomPage() {
             if(user) leftUsername = user.username;
             return prev.filter(p => p.id !== userId);
         });
-         if(leftUsername !== currentUser?.username) {
+         if(leftUsername !== currentUser.username) {
              toast({ description: `${leftUsername} left the room.` });
          }
     };
@@ -291,7 +304,8 @@ export default function VoiceRoomPage() {
        setParticipants([]);
        setChatMessages([]);
     };
-   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast]); // Added toast
+   // Added configError to dependencies
+   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError]);
 
 
   // --- Scroll chat to bottom ---
@@ -336,8 +350,14 @@ export default function VoiceRoomPage() {
         }
     } catch (error: any) {
          console.error("Password verification failed:", error);
-         setAuthError("Failed to verify password. Please try again later.");
-         toast({ title: "Error", description: "Could not verify password.", variant: "destructive" });
+         // Check for config error first
+         if (error.message?.includes("Backend API URL is not configured")) {
+             setConfigError(error.message);
+             toast({ title: "Configuration Error", description: error.message, variant: "destructive", duration: 15000 });
+         } else {
+             setAuthError("Failed to verify password. Please try again later.");
+             toast({ title: "Error", description: "Could not verify password.", variant: "destructive" });
+         }
     } finally {
          setIsAuthLoading(false);
     }
@@ -391,6 +411,21 @@ export default function VoiceRoomPage() {
 
   // --- Render Logic ---
 
+   // Display Configuration Error prominently if it exists
+   if (configError) {
+     return (
+         <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center text-center h-screen justify-center">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Configuration Error</AlertTitle>
+                <AlertDescription>{configError}</AlertDescription>
+              </Alert>
+              <p className="text-sm text-muted-foreground mt-4">Please ensure the NEXT_PUBLIC_SOCKET_URL environment variable is set correctly and try again.</p>
+              <Button variant="link" onClick={() => router.push('/voice-rooms')} className="mt-4">Go back to Rooms</Button>
+         </div>
+     );
+   }
+
   // Loading state for initial room details or user details
   if (isLoading || !currentUser) {
     return (
@@ -400,22 +435,10 @@ export default function VoiceRoomPage() {
     );
   }
 
-  // Configuration error
-  if (!SOCKET_SERVER_URL) {
-     return (
-         <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center text-center">
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Configuration Error</AlertTitle>
-                <AlertDescription>{connectionError || "Socket server URL is missing."}</AlertDescription>
-              </Alert>
-         </div>
-     );
-  }
-   // Room loading error
+   // Room loading error (but not config error)
    if (!roomDetails) {
      return (
-         <div className="container mx-auto p-8 text-center">
+         <div className="container mx-auto p-8 text-center h-screen flex flex-col justify-center items-center">
              <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
@@ -429,7 +452,7 @@ export default function VoiceRoomPage() {
   // --- Password Prompt ---
   if (roomDetails.passwordProtected && !isAuthenticated) {
     return (
-        <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center">
+        <div className="container mx-auto max-w-md py-20 px-4 flex flex-col items-center h-screen justify-center">
             <Lock className="h-16 w-16 text-primary mb-6" />
             <Card className="w-full">
                 <CardHeader>
@@ -619,4 +642,3 @@ export default function VoiceRoomPage() {
     </div>
   );
 }
-

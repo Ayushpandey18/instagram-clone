@@ -27,10 +27,10 @@ export interface VoiceRoom {
 // It should NOT include /socket.io
 const API_BASE_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
-if (!API_BASE_URL) {
-  console.error("FATAL ERROR: NEXT_PUBLIC_SOCKET_URL environment variable is not set!");
-  // You might want to throw an error here or handle it appropriately
-  // depending on whether this code runs server-side or client-side during build.
+// Log if the variable is missing during build or server-side, but don't throw error immediately.
+// The error will be thrown by functions that need it if it's still missing at runtime.
+if (typeof window === 'undefined' && !API_BASE_URL) {
+  console.warn("Warning: NEXT_PUBLIC_SOCKET_URL environment variable is not set. API calls will fail.");
 }
 
 
@@ -40,11 +40,11 @@ if (!API_BASE_URL) {
  * @param name The name of the voice room.
  * @param password The password for the voice room (optional). If provided, sets passwordProtected to true.
  * @returns A promise that resolves to the created VoiceRoom object.
- * @throws Error if room creation fails (e.g., duplicate name, server error, network error).
+ * @throws Error if the API URL is not configured or if room creation fails (e.g., duplicate name, server error, network error).
  */
 export async function createVoiceRoom(name: string, password?: string): Promise<VoiceRoom> {
     if (!API_BASE_URL) {
-        throw new Error("Backend API URL is not configured.");
+        throw new Error("Backend API URL is not configured. Please set the NEXT_PUBLIC_SOCKET_URL environment variable.");
     }
     console.log(`[Service] Creating room via API: ${name}, Password protected: ${!!password}`);
 
@@ -80,11 +80,12 @@ export async function createVoiceRoom(name: string, password?: string): Promise<
  *
  * @param id The ID of the voice room to retrieve.
  * @returns A promise that resolves to the VoiceRoom object or null if not found.
+ * @throws Error if the API URL is not configured.
  */
 export async function getVoiceRoom(id: string): Promise<VoiceRoom | null> {
      if (!API_BASE_URL) {
-        console.error("[Service] Backend API URL is not configured for getVoiceRoom.");
-        return null; // Or throw error
+        // Changed from console.error to throw an error
+        throw new Error("Backend API URL is not configured. Please set the NEXT_PUBLIC_SOCKET_URL environment variable.");
     }
    console.log(`[Service] Fetching room details via API for ID: ${id}`);
    // Simulate API call delay - REMOVE IN PRODUCTION
@@ -94,12 +95,17 @@ export async function getVoiceRoom(id: string): Promise<VoiceRoom | null> {
    // Usually, you'd fetch the list and find the room, or the backend would provide this endpoint.
    // For now, we'll simulate by fetching all and filtering, which is inefficient.
    try {
-        const allRooms = await getAllVoiceRooms();
+        const allRooms = await getAllVoiceRooms(); // This function also checks API_BASE_URL
         const room = allRooms.find(r => r.id === id);
         return room || null;
    } catch (error) {
+        // Catch errors from getAllVoiceRooms (like missing URL or fetch failure)
         console.error(`[Service] Error fetching room ${id}:`, error);
-        return null;
+        // Re-throw or return null based on desired behavior
+        if (error instanceof Error && error.message.includes("Backend API URL is not configured")) {
+            throw error; // Propagate the configuration error
+        }
+        return null; // Return null for other fetch errors specific to getting the room list
    }
 }
 
@@ -107,16 +113,24 @@ export async function getVoiceRoom(id: string): Promise<VoiceRoom | null> {
  * Asynchronously retrieves all available voice rooms from the backend API.
  *
  * @returns A promise that resolves to an array of VoiceRoom objects.
+ * @throws Error if the API URL is not configured or if fetching fails.
  */
 export async function getAllVoiceRooms(): Promise<VoiceRoom[]> {
    if (!API_BASE_URL) {
-        throw new Error("Backend API URL is not configured.");
+        throw new Error("Backend API URL is not configured. Please set the NEXT_PUBLIC_SOCKET_URL environment variable.");
     }
    console.log(`[Service] Fetching all voice rooms from API: ${API_BASE_URL}/api/rooms`);
    try {
         const response = await fetch(`${API_BASE_URL}/api/rooms`);
         if (!response.ok) {
-            throw new Error(`Failed to fetch rooms: ${response.status} ${response.statusText}`);
+            // Try to get a more specific error message from the response body
+            let errorMessage = `Failed to fetch rooms: ${response.status} ${response.statusText}`;
+            try {
+                const errorBody = await response.json();
+                errorMessage = errorBody.message || errorMessage;
+            } catch (e) { /* ignore JSON parsing error */ }
+            console.error('[Service] Failed to fetch rooms:', errorMessage);
+            throw new Error(errorMessage); // Throw the potentially more specific error
         }
         const rooms: VoiceRoom[] = await response.json();
         console.log(`[Service] Found ${rooms.length} rooms via API.`);
@@ -136,10 +150,11 @@ export async function getAllVoiceRooms(): Promise<VoiceRoom[]> {
  * @param roomId The ID of the room.
  * @param passwordAttempt The password attempt.
  * @returns A promise resolving to true if the password is correct, false otherwise.
+ * @throws Error if the API URL is not configured or if the verification request fails fundamentally.
  */
 export async function verifyRoomPassword(roomId: string, passwordAttempt: string): Promise<boolean> {
     if (!API_BASE_URL) {
-        throw new Error("Backend API URL is not configured.");
+        throw new Error("Backend API URL is not configured. Please set the NEXT_PUBLIC_SOCKET_URL environment variable.");
     }
      console.log(`[Service] Verifying password via API for room ${roomId}`);
 
@@ -159,13 +174,18 @@ export async function verifyRoomPassword(roomId: string, passwordAttempt: string
             return false;
         } else {
             // Handle other errors (404 Not Found, 400 Bad Request, 500 Server Error)
-            console.error(`[Service] Password verification failed with status ${response.status}`);
-            return false; // Or throw an error to indicate a problem beyond just wrong password
+            let errorMessage = `Password verification failed: ${response.status} ${response.statusText}`;
+             try {
+                const errorBody = await response.json();
+                errorMessage = errorBody.message || errorMessage;
+            } catch (e) { /* ignore JSON parsing error */ }
+            console.error(`[Service] Password verification failed with status ${response.status}: ${errorMessage}`);
+            // Throw an error for unexpected issues, return false only for wrong password
+            throw new Error(errorMessage);
         }
     } catch (error) {
         console.error("[Service] Error verifying password:", error);
-        // Depending on how you want to handle network errors vs incorrect passwords
-        // throw error; // Could re-throw to indicate a network/server issue
-        return false; // Treat network/server errors as verification failure for simplicity here
+        // Re-throw network/server errors
+        throw error;
     }
 }
