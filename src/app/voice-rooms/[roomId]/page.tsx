@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -136,8 +136,13 @@ export default function VoiceRoomPage() {
      // 3. User must be authenticated for the room (either not password protected or password entered)
      // 4. Current user details must be fetched
      // 5. Not already connecting or connected
-    if (!SOCKET_SERVER_URL || !roomDetails || !isAuthenticated || !currentUser || socketRef.current || isConnecting) {
-        // console.log("Socket connection prerequisites not met or already connected/connecting.");
+    if (!SOCKET_SERVER_URL || !roomDetails || !isAuthenticated || !currentUser) {
+        return;
+    }
+
+    // **Guard Condition:** Prevent reconnection if already connected or connecting
+    if (socketRef.current || isConnecting) {
+        console.log("Socket connection attempt skipped: Already connected or connecting.");
         return;
     }
 
@@ -151,12 +156,12 @@ export default function VoiceRoomPage() {
         reconnectionAttempts: 3, // Limit reconnection attempts
         timeout: 10000, // Connection timeout
      });
-     socketRef.current = socket;
+     socketRef.current = socket; // Assign immediately after creation
 
 
     const handleConnect = () => {
         console.log('Connected to Socket.IO server:', socket.id, 'using transport:', socket.io.engine.transport.name);
-        setIsConnecting(false);
+        setIsConnecting(false); // Set connecting to false *only* on successful connect
         setConnectionError(null);
         toast({ title: 'Connected', description: `Joined voice room: ${roomDetails.name}` });
 
@@ -172,7 +177,7 @@ export default function VoiceRoomPage() {
 
     const handleDisconnect = (reason: string) => {
         console.log('Disconnected from Socket.IO server:', reason);
-        setIsConnecting(false);
+        setIsConnecting(false); // Ensure connecting state is false on disconnect
         socketRef.current = null; // Clear the ref
          // Don't show error toast for intentional disconnects (e.g., leaving room)
         if (reason !== 'io client disconnect') {
@@ -185,7 +190,7 @@ export default function VoiceRoomPage() {
 
      const handleConnectError = (error: any) => { // Use 'any' to access potential transport details
         console.error('Socket.IO connection error (WebSocket):', error);
-        setIsConnecting(false);
+        setIsConnecting(false); // Ensure connecting state is false on error
         socketRef.current = null; // Clear the ref
 
         let errorMessage = `Could not connect to the voice room server (${SOCKET_SERVER_URL}) via WebSocket. Error: ${error.message || 'Unknown error'}`;
@@ -193,9 +198,10 @@ export default function VoiceRoomPage() {
             errorMessage = `WebSocket connection failed. Ensure the server allows WebSocket upgrades and check network/firewall settings. Error: ${error.message}`;
         } else if (error instanceof Error) {
              errorMessage = `WebSocket Connection Error: ${error.message}. Please check server status and network.`;
-        } else if (error && error.message && error.message.toLowerCase().includes('xhr poll error')) {
-             errorMessage = `WebSocket connection failed, fallback to polling also failed. Please check CORS settings on the server and network connectivity. Error: ${error.message}`;
+        } else {
+             errorMessage = `An unknown WebSocket connection error occurred. Please check server status and network.`;
         }
+
 
         setConnectionError(errorMessage);
          toast({
@@ -281,11 +287,12 @@ export default function VoiceRoomPage() {
        setChatMessages([]); // Clear messages
     };
    // Removed toast from dependency array
-   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, isConnecting]); // Dependencies, added isConnecting
+   // Only trigger this effect if the core dependencies change
+   }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser]); // Removed isConnecting
 
 
   // --- Scroll chat to bottom ---
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => { // Memoize scrollToBottom
       const scrollArea = chatScrollAreaRef.current;
       if (scrollArea) {
         const viewport = scrollArea.querySelector('div[data-radix-scroll-area-viewport]');
@@ -296,7 +303,7 @@ export default function VoiceRoomPage() {
             });
         }
       }
-  };
+  }, []); // No dependencies needed for this specific function
 
   // Update scroll only when the number of messages increases
   useEffect(() => {
@@ -305,11 +312,11 @@ export default function VoiceRoomPage() {
       }
       // Update the ref *after* potential scroll
       prevMessagesCountRef.current = chatMessages.length;
-  }, [chatMessages]); // Trigger scroll only when messages change
+  }, [chatMessages, scrollToBottom]); // Trigger scroll only when messages or scrollToBottom changes
 
 
   // --- Event Handlers ---
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
+  const handlePasswordSubmit = useCallback(async (e: React.FormEvent) => { // useCallback for event handlers
     e.preventDefault();
     if (!password || !roomDetails) return;
     setIsAuthLoading(true);
@@ -330,9 +337,9 @@ export default function VoiceRoomPage() {
        toast({ title: "Access Denied", description: "Incorrect password.", variant: "destructive" });
      }
     setIsAuthLoading(false);
-  };
+  }, [password, roomDetails, toast]); // Dependencies for handlePasswordSubmit
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = useCallback((e: React.FormEvent) => { // useCallback for event handlers
     e.preventDefault();
     if (!newMessage.trim() || !socketRef.current || !socketRef.current.connected || !currentUser) return;
 
@@ -340,47 +347,52 @@ export default function VoiceRoomPage() {
      socketRef.current.emit('send_message', {
          roomId,
          message: newMessage,
-         // Sender info is implicitly known by the server via socket.id,
-         // but good practice to potentially send username if needed server-side beyond lookup
-         // username: currentUser.username
       });
 
     setNewMessage('');
     // Optimistic update is handled by the server broadcasting 'new_message' back
-  };
+  }, [newMessage, roomId, currentUser]); // Dependencies for handleSendMessage
 
-  const handleLeaveRoom = () => {
+  const handleLeaveRoom = useCallback(() => { // useCallback for event handlers
     console.log("Leaving room...");
      if (socketRef.current) {
-        // socketRef.current.emit('leave_voice_room', { roomId }); // Optionally notify server explicitly
         socketRef.current.disconnect(); // Disconnect socket triggers cleanup
         socketRef.current = null;
     }
     toast({ title: "Left Room", description: `You have left ${roomDetails?.name}.` });
     router.push('/voice-rooms'); // Navigate back to rooms list
-  };
+  }, [router, roomDetails?.name, toast]); // Dependencies for handleLeaveRoom
 
-  const toggleMute = () => {
+  const toggleMute = useCallback(() => { // useCallback for event handlers
      const newMutedState = !isMuted;
      setIsMuted(newMutedState);
      if (socketRef.current?.connected) {
         socketRef.current.emit('update_participant', { roomId, updates: { isMuted: newMutedState } });
      }
      // TODO: Actually mute/unmute local audio track using WebRTC API if implementing voice
-  };
+  }, [isMuted, roomId]); // Dependencies for toggleMute
 
-  const toggleDeafen = () => {
+  const toggleDeafen = useCallback(() => { // useCallback for event handlers
      const newDeafenedState = !isDeafened;
      setIsDeafened(newDeafenedState);
      // TODO: Send deafen status update via socket (optional)
      // TODO: Actually mute/unmute incoming audio using WebRTC API or browser audio controls
      if (newDeafenedState && !isMuted) {
-         toggleMute(); // Deafen usually implies mute as well
-     } else if (!newDeafenedState && isMuted && !/* was explicitly muted before deafen */false) {
-        // If undeafening, consider unmuting *unless* user explicitly muted themselves beforehand
-        // This requires more state tracking
+         // Use functional update for setIsMuted if it depends on previous state
+         setIsMuted(prevMuted => {
+             if (!prevMuted && socketRef.current?.connected) {
+                 socketRef.current.emit('update_participant', { roomId, updates: { isMuted: true } });
+             }
+             return true;
+         });
+     } else if (!newDeafenedState && isMuted) {
+        // Consider undeafening logic more carefully if tracking explicit mutes
+        // For now, let's assume undeafening might unmute if the mute was due to deafen
+        // This part might need refinement based on exact UX desired
+        // If you want unmute ONLY if mute was solely due to deafen, you need more state.
+        // Simple approach: Undeafen doesn't automatically unmute. User has to unmute separately.
      }
-  };
+  }, [isDeafened, isMuted, roomId]); // Dependencies for toggleDeafen
 
 
   // --- Render Logic ---
@@ -537,10 +549,6 @@ export default function VoiceRoomPage() {
                  <Button variant={isDeafened ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleDeafen} aria-label={isDeafened ? 'Undeafen' : 'Deafen'} disabled={isConnecting || !!connectionError}>
                     {isDeafened ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                  </Button>
-                  {/* <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <Settings className="h-4 w-4" />
-                      <span className="sr-only">Settings</span>
-                  </Button> */}
                  <Button variant="destructive" size="icon" className="h-8 w-8" onClick={handleLeaveRoom} aria-label="Leave Room">
                     <PhoneOff className="h-4 w-4" />
                  </Button>
@@ -550,11 +558,6 @@ export default function VoiceRoomPage() {
 
       {/* Chat Area */}
       <main className="flex-grow flex flex-col bg-background min-w-0"> {/* Ensure main area can shrink */}
-        {/* Chat Header (Optional) */}
-        {/* <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
-             <h2 className="text-lg font-semibold">Chat</h2>
-        </div> */}
-
         {/* Connection Error Alert */}
          {connectionError && (
             <div className="p-4 flex-shrink-0">
