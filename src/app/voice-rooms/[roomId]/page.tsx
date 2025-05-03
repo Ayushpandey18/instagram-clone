@@ -165,20 +165,23 @@ export default function VoiceRoomPage() {
             .then(stream => {
                 console.log("Local audio stream obtained.");
                 localStreamRef.current = stream;
-                stream.getAudioTracks().forEach(track => track.enabled = !isMuted); // Default state allows talking
+                // Muting/unmuting will be handled by user action, don't force initial state here
+                // stream.getAudioTracks().forEach(track => track.enabled = !isMuted);
                 if (!socketRef.current && !isConnecting) {
                     console.log("Local stream ready, proceeding to connect socket.");
+                     // Re-trigger socket connection effect if stream was obtained AFTER initial check
+                     // This might require adjusting the socket connection useEffect dependencies
                 }
             })
             .catch(err => {
                 console.error("Error getting user media:", err);
-                toast({
-                    variant: 'warning', // Change to warning as it's not blocking joining anymore
-                    title: 'Microphone Access Error',
-                    description: 'Could not access microphone. You will not be able to speak.',
-                    duration: 7000
-                });
-                // No longer setting connectionError here, allowing connection attempt anyway
+                // Do not prevent joining, just inform the user they cannot speak yet
+                // toast({
+                //     variant: 'warning',
+                //     title: 'Microphone Access Needed',
+                //     description: 'Could not access microphone. Grant permission to speak.',
+                //     duration: 7000
+                // });
             });
 
         // Cleanup stream on unmount or if authentication changes
@@ -189,8 +192,34 @@ export default function VoiceRoomPage() {
                  localStreamRef.current = null;
             }
         };
-    }, [isAuthenticated, isMuted, toast, configError, currentUser, isConnecting]);
+    // Removed isMuted dependency
+    }, [isAuthenticated, toast, configError, currentUser, isConnecting]);
 
+
+    const closePeerConnection = useCallback((targetSocketId: string) => {
+        const pc = peerConnections.current[targetSocketId];
+        if (pc) {
+            console.log(`Closing peer connection with ${targetSocketId}`);
+            pc.ontrack = null;
+            pc.onicecandidate = null;
+            pc.oniceconnectionstatechange = null;
+            pc.onconnectionstatechange = null;
+            // Stop transceivers associated with the connection
+            pc.getTransceivers().forEach(transceiver => {
+                if (transceiver.stop) {
+                    transceiver.stop();
+                }
+            });
+            pc.close();
+            delete peerConnections.current[targetSocketId];
+        }
+        const audioEl = remoteAudioRefs.current[targetSocketId];
+        if (audioEl) {
+            audioEl.srcObject = null;
+            audioEl.remove();
+            delete remoteAudioRefs.current[targetSocketId];
+        }
+    }, []);
 
     // --- WebRTC Peer Connection Management ---
     const createPeerConnection = useCallback((targetSocketId: string) => {
@@ -213,8 +242,13 @@ export default function VoiceRoomPage() {
 
         // Only add tracks if the local stream exists
         if (localStreamRef.current) {
+             console.log(`Adding local audio tracks to connection with ${targetSocketId}`);
             localStreamRef.current.getTracks().forEach(track => {
-                pc.addTrack(track, localStreamRef.current!);
+                try {
+                    pc.addTrack(track, localStreamRef.current!);
+                } catch (err) {
+                    console.error(`Error adding track to pc for ${targetSocketId}:`, err);
+                }
             });
         } else {
              console.log(`Peer connection to ${targetSocketId} created without local audio tracks.`);
@@ -252,7 +286,7 @@ export default function VoiceRoomPage() {
                     container.appendChild(audioEl);
                 }
                  audioEl.srcObject = stream;
-                 audioEl.muted = isDeafened;
+                 audioEl.muted = isDeafened; // Apply deafen state when track is received
             } else {
                  console.warn(`Received track event from ${targetSocketId} without streams.`);
             }
@@ -276,31 +310,6 @@ export default function VoiceRoomPage() {
 
     }, [isDeafened, closePeerConnection]); // Added closePeerConnection dependency
 
-
-    const closePeerConnection = useCallback((targetSocketId: string) => {
-        const pc = peerConnections.current[targetSocketId];
-        if (pc) {
-            console.log(`Closing peer connection with ${targetSocketId}`);
-            pc.ontrack = null;
-            pc.onicecandidate = null;
-            pc.oniceconnectionstatechange = null;
-            pc.onconnectionstatechange = null;
-            // Stop transceivers associated with the connection
-            pc.getTransceivers().forEach(transceiver => {
-                if (transceiver.stop) {
-                    transceiver.stop();
-                }
-            });
-            pc.close();
-            delete peerConnections.current[targetSocketId];
-        }
-        const audioEl = remoteAudioRefs.current[targetSocketId];
-        if (audioEl) {
-            audioEl.srcObject = null;
-            audioEl.remove();
-            delete remoteAudioRefs.current[targetSocketId];
-        }
-    }, []);
 
     // --- Socket.IO Connection and Data Handling ---
     useEffect(() => {
@@ -378,6 +387,7 @@ export default function VoiceRoomPage() {
 
                              // Only send offer if we have a local stream to offer tracks
                             if (localStreamRef.current) {
+                                console.log(`Local stream exists. Creating offer for ${targetSocketId}`);
                                 const offer = await pc.createOffer();
                                 await pc.setLocalDescription(offer);
                                 console.log(`Sending offer to ${targetSocketId}`);
@@ -395,10 +405,16 @@ export default function VoiceRoomPage() {
 
         const handleParticipantJoined = (participant: Participant) => {
              console.log('Participant joined:', participant);
+             // Ensure participant object and id exist
+            if (!participant || !participant.id) {
+                console.warn("Received invalid participant_joined event:", participant);
+                return;
+            }
+
              setParticipants(prev => prev.find(p => p.id === participant.id) ? prev : [...prev, participant]);
              // Count will be updated via 'participant_count_update'
              if (participant.id !== socket.id) {
-                 if (participant.username !== currentUser.username) {
+                 if (currentUser && participant.username !== currentUser.username) {
                     toast({ description: `${participant.username} joined the room.` });
                  }
                  // Important: Initiate connection *to* the new participant
@@ -414,6 +430,8 @@ export default function VoiceRoomPage() {
                              socketRef.current?.emit('webrtc_offer', { targetSocketId: participant.id, offer: pc.localDescription });
                          })
                         .catch(err => console.error(`Error creating offer for new participant ${participant.id}:`, err));
+                 } else {
+                     console.log(`Not sending offer to new participant ${participant.id} (no local stream).`);
                  }
              }
         };
@@ -434,13 +452,23 @@ export default function VoiceRoomPage() {
         };
 
         const handleNewMessage = (message: ChatMessage) => {
+            // Ensure message object is valid
+            if (!message || !message.id) {
+                console.warn("Received invalid new_message event:", message);
+                return;
+            }
             setChatMessages(prev => [...prev, message]);
         };
 
         const handleParticipantUpdate = (update: Partial<Participant> & { id: string }) => {
+            // Ensure update object and id exist
+            if (!update || !update.id) {
+                console.warn("Received invalid participant_update event:", update);
+                return;
+            }
             setParticipants(prev => prev.map(p => p.id === update.id ? { ...p, ...update } : p));
              // Check if the update is for the current user and relates to speaking status
-            if (update.id === socket.id && typeof update.isSpeaking === 'boolean') {
+            if (socketRef.current && update.id === socketRef.current.id && typeof update.isSpeaking === 'boolean') {
                  console.log('Speaking status update received:', update.isSpeaking);
                  // TODO: Add visual feedback for speaking state if needed
             }
@@ -455,7 +483,7 @@ export default function VoiceRoomPage() {
         // --- WebRTC Signaling Handlers ---
         const handleWebRTCOffer = async ({ senderSocketId, offer }: { senderSocketId: string, offer: RTCSessionDescriptionInit }) => {
             console.log(`Received offer from ${senderSocketId}`);
-            // No longer checking localStreamRef here, as we want to receive audio even if we can't send
+            // Allow handling offer even without local stream ready
             // if (!localStreamRef.current) {
             //      console.error("Cannot handle offer: Local stream not ready.");
             //      return;
@@ -474,10 +502,15 @@ export default function VoiceRoomPage() {
 
             try {
                 await pc.setRemoteDescription(new RTCSessionDescription(offer));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                console.log(`Sending answer to ${senderSocketId}`);
-                socketRef.current?.emit('webrtc_answer', { targetSocketId: senderSocketId, answer });
+                 // Only create/send answer if local stream is available to include tracks
+                 if (localStreamRef.current) {
+                     const answer = await pc.createAnswer();
+                     await pc.setLocalDescription(answer);
+                     console.log(`Sending answer to ${senderSocketId}`);
+                     socketRef.current?.emit('webrtc_answer', { targetSocketId: senderSocketId, answer });
+                 } else {
+                     console.log(`Offer from ${senderSocketId} accepted, but not sending answer yet (no local stream).`);
+                 }
             } catch (err) {
                  console.error(`Error handling offer from ${senderSocketId}:`, err);
             }
@@ -504,9 +537,9 @@ export default function VoiceRoomPage() {
             if (pc && candidate && pc.remoteDescription) { // Only add candidate if remote description is set
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (err) {
+                } catch (err: any) { // Type error as any to check message
                     // Ignore benign errors like candidate added before remote description set
-                    if (!err.message.includes("Can't add ICE Candidate without remoteDescription")) {
+                    if (!err?.message?.includes("Can't add ICE Candidate without remoteDescription")) {
                        console.error(`Error adding ICE candidate from ${senderSocketId}:`, err);
                     }
                 }
@@ -550,8 +583,8 @@ export default function VoiceRoomPage() {
             peerConnections.current = {};
             remoteAudioRefs.current = {};
         };
-    // Added localStreamRef as dependency to re-evaluate WebRTC offers when stream becomes available
-    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection, localStreamRef.current]);
+    // Removed localStreamRef.current from dependencies
+    }, [SOCKET_SERVER_URL, roomId, roomDetails, isAuthenticated, currentUser, toast, configError, createPeerConnection, closePeerConnection]);
 
 
     // --- Scroll chat to bottom ---
@@ -626,9 +659,36 @@ export default function VoiceRoomPage() {
 
     const toggleMute = useCallback(() => {
         if (!localStreamRef.current) {
-             toast({ variant: "warning", title: "Mute Failed", description: "Microphone not available." });
-             return;
+            // Prompt user to grant mic access if stream doesn't exist
+             navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+                .then(stream => {
+                    console.log("Mic access granted after mute toggle.");
+                    localStreamRef.current = stream;
+                     // Now that we have the stream, enable the track and update state
+                     stream.getAudioTracks().forEach(track => track.enabled = true);
+                     setIsMuted(false); // User intended to unmute
+                     if (socketRef.current?.connected) {
+                        socketRef.current.emit('update_participant', { roomId, updates: { isMuted: false } });
+                     }
+                    // Re-add tracks to existing connections if necessary (more complex)
+                    Object.values(peerConnections.current).forEach(pc => {
+                        const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+                        if (sender && stream.getAudioTracks()[0]) {
+                            sender.replaceTrack(stream.getAudioTracks()[0]);
+                        } else if (stream.getAudioTracks()[0]) {
+                            pc.addTrack(stream.getAudioTracks()[0], stream);
+                        }
+                    });
+
+                })
+                .catch(err => {
+                    console.error("Error getting mic access on mute toggle:", err);
+                    toast({ variant: "destructive", title: "Mute Failed", description: "Could not access microphone. Please grant permission." });
+                });
+            return; // Exit early, let the promise handle the state update
         }
+
+        // If stream exists, toggle normally
         const newMutedState = !isMuted;
         setIsMuted(newMutedState);
 
@@ -650,13 +710,13 @@ export default function VoiceRoomPage() {
             audioEl.muted = newDeafenedState;
         });
 
-        // Automatically mute if deafening, but only unmute if they weren't previously muted
-        if (newDeafenedState && !isMuted) {
-             toggleMute(); // Mute the user
-        } else if (!newDeafenedState && isMuted && localStreamRef.current) {
-            // Check if user was muted *because* they were deafened
-            // This part is tricky, maybe simpler to just let user unmute manually
-            // For simplicity, we won't auto-unmute here. User can click unmute separately.
+        // Automatically mute if deafening
+        if (newDeafenedState && !isMuted && localStreamRef.current) {
+             setIsMuted(true);
+             localStreamRef.current?.getAudioTracks().forEach(track => track.enabled = false);
+             if (socketRef.current?.connected) {
+                socketRef.current.emit('update_participant', { roomId, updates: { isMuted: true } });
+             }
         }
         console.log("Deafen state changed:", newDeafenedState);
     }, [isDeafened, isMuted, roomId, toggleMute]);
@@ -756,13 +816,6 @@ export default function VoiceRoomPage() {
                 <AlertDescription>{connectionError}</AlertDescription>
              </Alert>
            )}
-            {/* Removed the "Mic access needed" alert */}
-            {/* {!localStreamRef.current && isAuthenticated && !connectionError && (
-                 <Alert variant="destructive" className="mt-2 p-2 text-xs">
-                    <MicOff className="h-3 w-3" />
-                    <AlertDescription>Mic access needed</AlertDescription>
-                 </Alert>
-            )} */}
         </div>
 
         {/* Participant List */}
@@ -815,7 +868,7 @@ export default function VoiceRoomPage() {
                 )}
              </div>
              <div className="flex items-center space-x-1 flex-shrink-0">
-                 <Button variant={isMuted ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'} disabled={isConnecting || !!connectionError || !localStreamRef.current}>
+                 <Button variant={isMuted ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'} disabled={isConnecting || !!connectionError}>
                     {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                  </Button>
                  <Button variant={isDeafened ? "destructive" : "secondary"} size="icon" className="h-8 w-8" onClick={toggleDeafen} aria-label={isDeafened ? 'Undeafen' : 'Deafen'} disabled={isConnecting || !!connectionError}>
@@ -901,4 +954,3 @@ export default function VoiceRoomPage() {
     </div>
   );
 }
-
